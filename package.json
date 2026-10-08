@@ -1,0 +1,33 @@
+{
+  "name": "ask-blackboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "读取 Blackboard 课程公告并提供有出处的 AI 问答的个人浏览器扩展。",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "npm run typecheck && node scripts/build.mjs",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "package": "npm run build && powershell -NoProfile -File scripts/package.ps1"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.4",
+    "@types/node": "^26.6.4",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3",
+    "vitest": "^5.0.3"
+  }
+}

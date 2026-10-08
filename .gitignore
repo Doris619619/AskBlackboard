@@ -1,0 +1,8 @@
+# 文件用途：排除本地依赖、构建产物、验收资料和个人凭据。
+node_modules/
+dist/
+artifacts/
+.local/
+.env*
+!.env.example
+*.tsbuildinfo
