@@ -10,11 +10,11 @@ import type { Turn } from './use-assistant';
 /** 展示单次问题的进行状态或有出处回答；模型失败时依然提供已经读取的资料。 */
 function ConversationTurn({ turn, busy, onRetry }: { turn: Turn; busy: boolean; onRetry: (turn: Turn) => void }) {
   const working = turn.stage === 'reading' || turn.stage === 'answering';
-  const answerLabels = { found: 'AI 回答 · 根据课程公告', not_found: 'AI 回答 · 未找到明确说明', conflict: 'AI 回答 · 公告存在冲突' };
+  const answerLabels = { found: 'AI · 根据课程公告', not_found: '未找到明确说明', conflict: '公告存在冲突' };
   return <article className="conversation-turn">
     <div className="question-message"><p>{turn.question}</p></div>
     <div className="assistant-message">
-      <p className="answer-label"><span className="mini-brand"><Icon name="book" /></span><span>{turn.course.code}{turn.course.section ? ` · ${turn.course.section}` : ''}</span></p>
+      <p className="answer-label"><span className="mini-brand"><Icon name="book" /></span><span>{turn.course.code}{turn.course.section ? ` · ${turn.course.section}` : ''}</span><span className="answer-term">{turn.course.termLabel}</span></p>
       {working && <div className="progress-message" role="status"><span className="activity-dot" />{turn.stage === 'reading' ? '正在读取最新课程公告…' : '正在核对问题与公告原文…'}</div>}
       <div className="answer-content" role="status" aria-atomic="true">{turn.answer && <><p className="answer-status">{answerLabels[turn.answer.status]}</p><p className="answer-text">{turn.answer.answer}</p></>}</div>
       {turn.error && <div className="turn-error" role="alert"><p>{turn.error}</p><button className="text-button" type="button" disabled={busy} onClick={/** 使用现有证据重试本条问题。 */ function handleRetry() { onRetry(turn); }}><Icon name="refresh" /><span>重试{turn.snapshot ? '回答' : '读取'}</span></button></div>}
@@ -57,7 +57,7 @@ export function App() {
   }
 
   /** 示例只填充输入，由用户发送后读取真实公告并产生回答。 */
-  function useExample() { setDraft('GED2005 的 quiz 是啥时候？'); textarea.current?.focus(); }
+  function useExample(question: string) { setDraft(question); textarea.current?.focus(); }
 
   /** 对话框卸载后恢复到设置按钮，避免 Escape 或保存后键盘焦点丢到页面根节点。 */
   function closeSettings() {
@@ -70,13 +70,12 @@ export function App() {
   return <div className="app-shell">
     <header className="app-header"><div className="brand"><span className="brand-mark"><Icon name="book" /></span><h1>AskBlackboard</h1></div><button ref={settingsButton} type="button" className="icon-button" aria-label="打开设置" title="设置" onClick={/** 点击设置按钮打开个人配置。 */ function showSettings() { setSettingsOpen(true); }}><Icon name="settings" /></button></header>
     <section className="course-context" aria-label="课程和连接状态">
-      <div className="context-label"><span>{assistant.discovery ? '课程' : 'Blackboard'}</span><button type="button" className="text-button refresh-courses" disabled={assistant.discovering || assistant.busy || !assistant.extensionAvailable} onClick={assistant.refreshCourses}><Icon name="refresh" /><span>{assistant.discovering ? '连接中' : '刷新'}</span></button></div>
-      <label className="sr-only" htmlFor="course-select">选择课程和教学班</label><div className="course-picker"><select id="course-select" value={assistant.selectedId} disabled={assistant.discovering || assistant.busy || !assistant.discovery} onChange={/** 选择课程同时明确歧义课程的班组。 */ function changeCourse(event) { assistant.selectCourse(event.target.value); }}><option value="">{assistant.discovering ? '正在读取课程…' : assistant.discovery ? '选择一门课程' : '等待连接课程'}</option>{assistant.discovery?.courses.map(/** 每项包含学期与班组，避免同编号课程难以区分。 */ function renderCourse(course) { return <option key={course.courseId} value={course.courseId}>{course.code}{course.section ? ` · ${course.section}` : ''}{course.termLabel ? ` · ${course.termLabel}` : ''}</option>; })}</select><Icon name="chevron" /></div>
-      <div className="connection-line"><span className={`connection-dot ${assistant.discovery && !assistant.connectionError ? 'connected' : ''}`} /><span>{assistant.discovering ? '正在连接 Blackboard' : assistant.connectionError ? '连接需要恢复' : assistant.discovery ? '已连接 Blackboard' : assistant.extensionAvailable ? '请登录 Blackboard' : '在浏览器扩展中使用'}</span>{currentCourse?.termLabel && <span className="term-label">{currentCourse.termLabel}</span>}</div>
+      <div className="course-controls"><label className="sr-only" htmlFor="course-select">选择课程和教学班</label><div className="course-picker"><select id="course-select" value={assistant.selectedId} disabled={assistant.discovering || assistant.busy || !assistant.discovery} onChange={/** 选择课程同时明确歧义课程的班组。 */ function changeCourse(event) { assistant.selectCourse(event.target.value); }}><option value="">{assistant.discovering ? '正在读取课程…' : assistant.discovery ? '选择一门课程' : '等待连接课程'}</option>{assistant.discovery?.courses.map(/** 每项包含学期与班组，避免同编号课程难以区分。 */ function renderCourse(course) { return <option key={course.courseId} value={course.courseId}>{course.code}{course.section ? ` · ${course.section}` : ''}{course.termLabel ? ` · ${course.termLabel}` : ''}</option>; })}</select><Icon name="chevron" /></div><button type="button" className="icon-button refresh-courses" aria-label="刷新课程" title="刷新课程" disabled={assistant.discovering || assistant.busy || !assistant.extensionAvailable} onClick={assistant.refreshCourses}><Icon name="refresh" /></button></div>
+      <div className="connection-line"><span className={`connection-dot ${assistant.discovery && !assistant.connectionError ? 'connected' : ''}`} /><span>{assistant.discovering ? '正在连接 Blackboard' : assistant.connectionError ? '连接需要恢复' : assistant.discovery ? '已连接 Blackboard' : assistant.extensionAvailable ? '请登录 Blackboard' : '在浏览器扩展中使用'}</span><span className="term-label">仅查公告</span></div>
       {assistant.connectionError && <p className="context-error" role="alert">{assistant.connectionError}</p>}
     </section>
     <main className="workspace" aria-label="课程问答">
-      {!hasTurns && <div className="empty-state"><span className="empty-book"><Icon name="book" width="44" height="44" /></span><h2>问问你的课程</h2><p>查看最新公告，回答附上原文出处。</p><button type="button" className="example-question" onClick={useExample}><span>GED2005 的 quiz 是啥时候？</span><Icon name="chevron" /></button>{!assistant.settings.apiKey && <button type="button" className="text-button setup-link" onClick={/** 首次使用提供直达密钥设置的入口。 */ function setupConnection() { setSettingsOpen(true); }}>设置 DeepSeek 连接</button>}</div>}
+      {!hasTurns && <div className="empty-state"><span className="empty-book"><Icon name="book" width="24" height="24" /></span><h2>课程里的事，直接问。</h2><p>写上课程号或简称，<br />从最新公告中找答案。</p><div className="example-list">{['GEB 的 presentation 是什么时候？', 'GED2005 的 quiz 有什么要求？'].map(/** 示例只填入草稿，用户确认后才读取公告。 */ function renderExample(question) { return <button key={question} type="button" className="example-question" onClick={/** 将对应示例放入草稿并聚焦输入。 */ function fillExample() { useExample(question); }}><span>{question}</span><Icon name="arrow" /></button>; })}</div>{!assistant.settings.apiKey && <button type="button" className="text-button setup-link" onClick={/** 首次使用提供直达密钥设置的入口。 */ function setupConnection() { setSettingsOpen(true); }}>设置 DeepSeek 连接</button>}</div>}
       {assistant.turns.map(/** 会话按提问顺序显示，不隐藏采集失败的条目。 */ function renderTurn(turn) { return <ConversationTurn key={turn.id} turn={turn} busy={assistant.busy} onRetry={assistant.retry} />; })}
       <div ref={end} />
     </main>
@@ -85,7 +84,7 @@ export function App() {
       <form className="composer" onSubmit={/** 表单提交覆盖辅助技术和触摸键盘发送。 */ function handleSubmit(event) { event.preventDefault(); submitQuestion(); }}>
         <label className="sr-only" htmlFor="question">输入课程问题</label><textarea ref={textarea} id="question" rows={1} placeholder="问课程里的事…" value={draft} disabled={assistant.busy} onChange={/** 草稿停留在侧栏内，发送成功后清空。 */ function changeDraft(event) { setDraft(event.target.value); }} onKeyDown={handleComposerKey} />
         {assistant.busy ? <button type="button" className="send-button stop-button" aria-label="停止回答" title="停止" onClick={assistant.cancel}><Icon name="stop" /></button> : <button type="submit" className="send-button" disabled={!draft.trim()} aria-label="发送问题" title="发送"><Icon name="arrow" /></button>}
-      </form><p className="composer-caption">{assistant.busy ? '正在查看课程公告 · 可随时停止' : '每次提问读取公告 · 回答附原文来源'}</p>
+      </form><p className="composer-caption">{assistant.busy ? '正在查看课程公告 · 可随时停止' : currentCourse ? `未指定课程时查询 ${currentCourse.code} · Enter 发送` : '写课程号或简称 · Enter 发送'}</p>
     </footer>
     {settingsOpen && <SettingsDialog settings={assistant.settings} onSave={assistant.updateSettings} onClose={closeSettings} extensionAvailable={assistant.extensionAvailable} />}
   </div>;

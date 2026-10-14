@@ -117,6 +117,8 @@ try {
   passed('keyboard + actual collection + model contract + visible answer');
 
   const sourcePromise = context.waitForEvent('page');
+  assert.equal(await panel.locator('.cited-sources .source-row[open]').count(), 0);
+  await panel.locator('.cited-sources .source-row > summary').first().click();
   await panel.locator('.cited-sources').getByRole('button', { name: '打开公告原文' }).first().click();
   const source = await sourcePromise;
   await source.waitForURL(`${announcementUrl}#_901_1`);
@@ -216,7 +218,9 @@ try {
   assert.match(await panel.locator('.conversation-turn').last().locator('.answer-label').innerText(), /GEB2509/);
   await panel.screenshot({ path: path.join(output, 'course-switch.png') });
   passed('GEB abbreviation overrides selected GED; model receives only GEB evidence');
+  assert.equal(await panel.locator('.conversation-turn').last().locator('.cited-sources .source-row').count(), 1);
   const gebSourcePromise = context.waitForEvent('page');
+  await panel.locator('.conversation-turn').last().locator('.cited-sources .source-row > summary').click();
   assert.equal(await panel.locator('.conversation-turn').last().locator('.cited-sources blockquote').count(), 2);
   await panel.locator('.conversation-turn').last().getByRole('button', { name: '打开公告原文' }).first().click();
   const gebSource = await gebSourcePromise;
