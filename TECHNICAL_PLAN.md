@@ -24,7 +24,7 @@ flowchart LR
 
 ## 课程与公告
 
-解析真实 My_Courses_Tools 模块的学期、课程 ID、名称、代码及教学班。账号姓名兼容导航链接和按钮，仅读取其显示标签，不放宽通用正文对按钮、输入框和脚本的忽略规则。公告入口来自实际链接，不硬编码课程 ID。默认学期仅从含有效课程的四位 UG/PG 编号中按时间排序，排除 No Term Assigned 等文字标签和空分组；无编号时回退第一门有效课程的学期。默认当前学期唯一 GED2005；同编号多个教学班由用户明确选择。支持 ged2005 和 GED 2005。
+解析真实 My_Courses_Tools 模块的学期、课程 ID、名称、代码及教学班。账号姓名兼容导航链接和按钮，仅读取其显示标签，不放宽通用正文对按钮、输入框和脚本的忽略规则。公告入口来自实际链接，不硬编码课程 ID。默认学期仅从含有效课程的四位 UG/PG 编号中按时间排序，排除 No Term Assigned 等文字标签和空分组；无编号时回退第一门有效课程的学期。仅当前学期只有一门课程时自动默认选择；多课程账号初始为空。`course-resolution.ts` 在采集前优先匹配问题中的完整课程号或目录中真实存在的编号前缀简称（如 GEB），只在唯一时自动切换。多课程、多班组、历史学期需要明确选择；没有课程指代时才使用顶部选择。支持 ged2005、GED 2005、GED-2005，不对 GEB/GED 做模糊纠错。
 
 解析 announcementList，正文读取整个 .vtbegenerated，包含 MessageUniqueBody 之前的内容。所有已识别安全分页逐页读取：最多 20 页、约 60 秒，每页 15 秒。缺正文、超过上限或后续分页失败显示 partial；登录、错误或条款页不能当成空公告。
 
@@ -37,6 +37,8 @@ flowchart LR
 固定接口 https://api.deepseek.com/chat/completions，默认 deepseek-flash，thinking.type=disabled，stream=false，response_format.type=json_object，max_tokens=1024，60 秒超时。密钥在 chrome.storage.local 的 TRUSTED_CONTEXTS 中，内容脚本不能读取，不经 runtime 消息传递。
 
 模型输出 {status, answer, citations}。status 为 found、not_found、conflict，引用为 {sourceId, quote}。程序验证 JSON、选定课程来源、原文连续摘录和可识别的日期、星期、钟点与时长；分别绑定测验编号与教学班，区分明确改期与冲突。无效输出报错并保留公告，模型不生成可点击链接。
+
+相对周表达按方向和星期归一化，中英文可以对应，但不把相对周转换为日历日期；明确星期可支持仅提及该周的较粗表达，反向禁止补星期。
 
 日期校验覆盖已测试格式，并非所有自然语言的完整逻辑证明。复杂表述仍依赖模型说明不确定；被拒绝时可直接查看来源。只读公告不代表查遍课程资料。
 

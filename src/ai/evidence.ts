@@ -81,6 +81,16 @@ function associatedSection(clause: string, index: number, source?: SourceEvidenc
   return sourceSections.length === 1 ? sourceSections[0].toUpperCase() : null;
 }
 
+/** 将中英文相对周表达统一为方向与星期，不依据当前日期推算日历日期。 */
+function relativeWeek(value: string): string {
+  const text = value.toLowerCase();
+  const direction = /^(?:下|next)/u.test(text) ? 'next' : /^(?:上|last)/u.test(text) ? 'last' : 'this';
+  const english = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'].findIndex(/** 查找显式星期，不将 next week 补为某一天。 */ function matches(day) { return text.endsWith(day); });
+  const chinese = text.match(/周([日天一二三四五六])$/u)?.[1];
+  const weekday = english >= 0 ? english : chinese ? '日一二三四五六'.indexOf(chinese === '天' ? '日' : chinese) : -1;
+  return `${direction}:${weekday >= 0 ? weekday : 'week'}`;
+}
+
 /** 提取支持的绝对日期、钟点与分钟时长；日期与时长使用不同类型，禁止互相替代。 */
 function temporalFacts(text: string, source?: SourceEvidence, questionQuiz: number | null = null, requireQuizContext = false): TemporalFact[] {
   const facts: TemporalFact[] = [];
@@ -157,7 +167,7 @@ function temporalFacts(text: string, source?: SourceEvidence, questionQuiz: numb
       add('weekday', String(weekday), match.index);
     }
     for (const match of clause.matchAll(/(?:下|本|这|上)周[一二三四五六日天]?|明天|后天|今天|\b(?:next|this|last)\s+(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday|week)\b/giu)) {
-      add('relative', match[0].toLowerCase(), match.index);
+      add('relative', /周|\b(?:next|this|last)\b/iu.test(match[0]) ? relativeWeek(match[0]) : match[0], match.index);
     }
   }
   return facts;
@@ -179,6 +189,8 @@ function chineseNumber(text: string): number {
 function sameFact(answer: TemporalFact, evidence: TemporalFact): boolean {
   if (answer.kind !== evidence.kind || (answer.quiz !== null && answer.quiz !== evidence.quiz) || (answer.section !== null && evidence.section !== null && answer.section !== evidence.section)) return false;
   if (answer.value === evidence.value) return true;
+  // 原文明确「下周四」可以支持较粗的「下周」，反向不能凭空补星期。
+  if (answer.kind === 'relative' && answer.value.endsWith(':week') && evidence.value.startsWith(answer.value.split(':')[0] + ':')) return true;
   return answer.kind === 'date' && answer.value.startsWith('-') && answer.value === evidence.value.replace(/^20\d{2}/u, '');
 }
 

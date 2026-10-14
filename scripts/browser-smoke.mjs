@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { portalUrl, announcementUrl, portal, announcements, found, completion } from '../tests/browser/fixtures.mjs';
+import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl } from '../tests/browser/fixtures.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
 await mkdir(output, { recursive: true });
@@ -38,7 +38,7 @@ async function schoolRoute(route) {
   if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: portal });
   if (url.pathname.endsWith('/announcement')) {
     announcementReads += 1;
-    return route.fulfill({ contentType: 'text/html', body: announcements });
+    return route.fulfill({ contentType: 'text/html', body: url.searchParams.get('searchSelect') === '_702_1' ? gebAnnouncements : announcements });
   }
   return route.abort();
 }
@@ -49,6 +49,12 @@ async function modelRoute(route) {
   const payload = route.request().postDataJSON();
   const data = JSON.parse(payload.messages[1].content).DATA;
   assert.equal(data.sources.length, 1);
+  if (data.question.toLowerCase().startsWith('geb')) {
+    assert.equal(data.course.code, 'GEB2509');
+    assert.equal(data.sources[0].sourceId, '_902_1');
+    assert.ok(!data.sources[0].body.includes('Quiz 1'));
+    return route.fulfill({ json: completion(gebFound) });
+  }
   assert.equal(data.sources[0].sourceId, '_901_1');
   assert.equal(data.course.code, 'GED2005');
   if (modelMode === 'pending') await new Promise(function waitForRelease(resolve) { releasePending = resolve; });
@@ -82,7 +88,7 @@ try {
   panel.on('pageerror', function collectError(error) { pageErrors.push(error.message); });
   await panel.goto(`chrome-extension://${id}/sidepanel.html`);
   await visible('已连接 Blackboard');
-  assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '_700_1');
+  assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '');
   passed('actual extension worker + content script discover course');
 
   await panel.getByRole('button', { name: '打开设置', exact: true }).click();
@@ -202,6 +208,31 @@ try {
   await panel.locator('.conversation-turn').last().getByRole('button', { name: '重试读取' }).click();
   await panel.locator('.conversation-turn').last().getByText(found.answer, { exact: true }).waitFor();
   passed('expired login does not call model and recovers after retry');
+  await panel.setViewportSize({ width: 390, height: 844 });
+  await panel.getByLabel('选择课程和教学班').selectOption('_700_1');
+  await ask('geb好像要做一个pre是啥时候');
+  await visible(gebFound.answer);
+  assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '_702_1');
+  assert.match(await panel.locator('.conversation-turn').last().locator('.answer-label').innerText(), /GEB2509/);
+  await panel.screenshot({ path: path.join(output, 'course-switch.png') });
+  passed('GEB abbreviation overrides selected GED; model receives only GEB evidence');
+  const gebSourcePromise = context.waitForEvent('page');
+  assert.equal(await panel.locator('.conversation-turn').last().locator('.cited-sources blockquote').count(), 2);
+  await panel.locator('.conversation-turn').last().getByRole('button', { name: '打开公告原文' }).first().click();
+  const gebSource = await gebSourcePromise;
+  await gebSource.waitForURL(`${gebAnnouncementUrl}#_902_1`);
+  await gebSource.close();
+  passed('GEB source link belongs to GEB and never GED');
+  const beforeRejected = { calls: modelCalls, reads: announcementReads, turns: await panel.locator('.conversation-turn').count() };
+  for (const question of ['GEB 和 GED 的 pre', 'GEB9999 的 pre']) {
+    await ask(question);
+    await panel.locator('.composer-notice').waitFor();
+    assert.equal(await input.inputValue(), question);
+    assert.equal(modelCalls, beforeRejected.calls);
+    assert.equal(announcementReads, beforeRejected.reads);
+    assert.equal(await panel.locator('.conversation-turn').count(), beforeRejected.turns);
+  }
+  passed('ambiguous and unknown course requests preserve draft without collection or model calls');
   assert.deepEqual(pageErrors, []);
   await writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', kind: 'real-extension-synthetic-network', browser: context.browser()?.version(), checks, announcementReads, modelCalls }, null, 2));
 } catch (error) {

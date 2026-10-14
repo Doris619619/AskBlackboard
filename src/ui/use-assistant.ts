@@ -1,5 +1,6 @@
 /** 文件用途：协调课程发现、按需公告刷新和有出处的模型回答；凭据只在侧栏调用模型时使用。 */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { defaultCourse, resolveCourse } from '../blackboard/course-resolution';
 import { askDeepSeek } from '../ai/deepseek';
 import { collectAnnouncements, discoverCourses } from '../shared/browser-client';
 import { friendlyError } from '../shared/errors';
@@ -16,36 +17,6 @@ export interface Turn {
   stage: 'reading' | 'answering' | 'done' | 'error' | 'cancelled';
 }
 const initialSettings: Settings = { apiKey: '', model: 'deepseek-flash', theme: 'system' };
-
-/** 规范化课程号，允许问题中的小写与课程号中间空格。 */
-function normalizeCode(value: string): string { return value.replace(/\s+/g, '').toUpperCase(); }
-
-/** 优先选择当前学期唯一的 GED2005；多教学班时保留空选择，避免猜测。 */
-function defaultCourse(discovery: CourseDiscovery): string {
-  const preferred = discovery.courses.filter(/** 只从当前学期找到目标课，避免旧学期资料。 */ function isPreferred(course) { return course.termId === discovery.currentTermId && normalizeCode(course.code) === 'GED2005'; });
-  return preferred.length === 1 ? preferred[0].courseId : '';
-}
-
-/** 将题目中的课程号映射到已发现课程；不在问题中指定时使用明确选择的课程。 */
-function resolveCourse(question: string, discovery: CourseDiscovery, selectedId: string, manuallySelected: boolean): Course {
-  const requestedCodes = [...new Set((question.match(/[a-z]{2,}\s*\d{3,}/gi) ?? []).map(normalizeCode))];
-  if (requestedCodes.length > 1) throw new Error('请一次查询一门课程，避免混用不同课程的公告。');
-  const requested = requestedCodes[0];
-  const selected = discovery.courses.find(/** 使用课程 ID 查找选择项，不把不同班组混合。 */ function isSelected(course) { return course.courseId === selectedId; });
-  if (!requested) {
-    if (selected) return selected;
-    throw new Error('请先选择要查询的课程。');
-  }
-  const code = normalizeCode(requested);
-  const matching = discovery.courses.filter(/** 按规范化课程号匹配可见课程。 */ function isMatching(course) { return normalizeCode(course.code) === code; });
-  const current = matching.filter(/** 当前学期优先；历史课程需要明确选择。 */ function isCurrent(course) { return course.termId === discovery.currentTermId; });
-  if (manuallySelected && selected && normalizeCode(selected.code) === code) return selected;
-  if (matching.length && !current.length) throw new Error(`${code} 仅发现历史学期课程，请先在顶部明确选择学期。`);
-  const candidates = current.length ? current : matching;
-  if (candidates.length === 1) return candidates[0];
-  if (!candidates.length) throw new Error(`没有找到 ${code}，请刷新课程列表或检查课程号。`);
-  throw new Error(`${code} 有多个学期或教学班，请在顶部选择后再提问。`);
-}
 
 /** 管理侧栏会话；取消只中断模型并忽略晚到的采集结果，不修改 Blackboard。 */
 export function useAssistant() {
@@ -118,6 +89,7 @@ export function useAssistant() {
     const token = ++sequence.current;
     const id = retryId ?? Date.now();
     const abort = new AbortController(); controller.current = abort;
+    if (course.courseId !== selectedId) manuallySelected.current = false;
     setBusy(true); setNotice(''); setSelectedId(course.courseId);
     if (retryId) updateTurn(id, { error: undefined, answer: undefined, stage: previousSnapshot ? 'answering' : 'reading' });
     else setTurns(/** 添加问题到本侧栏会话，不持久化问题内容。 */ function append(previous) { return [...previous, { id, question, course, stage: 'reading' }]; });
