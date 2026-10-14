@@ -165,7 +165,12 @@ blockquote { border-left: 2px solid var(--accent); margin: 0 0 13px; padding: 0 
 @keyframes appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
 @media (max-width: 340px) { .app-header { padding-inline: 12px; } .brand { gap: 7px; } .brand h1 { font-size: 1rem; } .course-context, .workspace { padding-inline: 14px; } .composer-region { padding-inline: 12px; } .settings-dialog { padding: 17px; } }
-@media (max-height: 420px) { .app-shell { min-height: 420px; height: auto; } .workspace { overflow: visible; } .empty-state { min-height: 240px; } }
+/* 高倍缩放或短侧栏改用整页滚动，避免固定头尾挤压公告正文成不可读的小窗口。 */
+@media (max-height: 600px), (max-width: 260px) {
+  .app-shell { min-height: 100dvh; height: auto; }
+  .workspace { flex: 0 0 auto; overflow: visible; }
+  .empty-state { min-height: 240px; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 @media (prefers-contrast: more) { :root { --secondary: #40404a; --separator: #858590; } :root[data-theme='dark'] { --secondary: #dedee5; --separator: #8a8a93; } }
 @media (prefers-contrast: more) and (prefers-color-scheme: dark) { :root:not([data-theme='light']) { --secondary: #dedee5; --separator: #8a8a93; } }

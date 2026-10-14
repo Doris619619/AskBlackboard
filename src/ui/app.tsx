@@ -30,6 +30,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState('');
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const settingsButton = useRef<HTMLButtonElement>(null);
   const end = useRef<HTMLDivElement>(null);
   const currentCourse = assistant.discovery?.courses.find(/** 课程 ID 唯一对应顶部选择。 */ function findSelected(course) { return course.courseId === assistant.selectedId; });
   const hasTurns = assistant.turns.length > 0;
@@ -58,11 +59,16 @@ export function App() {
   /** 示例只填充输入，由用户发送后读取真实公告并产生回答。 */
   function useExample() { setDraft('GED2005 的 quiz 是啥时候？'); textarea.current?.focus(); }
 
-  /** 设置关闭回到工作区，不向模型传递任何界面状态。 */
-  function closeSettings() { setSettingsOpen(false); }
+  /** 对话框卸载后恢复到设置按钮，避免 Escape 或保存后键盘焦点丢到页面根节点。 */
+  function closeSettings() {
+    setSettingsOpen(false);
+    /** 等待 React 移除模态节点，再把焦点交还给仍存在的触发按钮。 */
+    function restoreSettingsFocus() { settingsButton.current?.focus(); }
+    requestAnimationFrame(restoreSettingsFocus);
+  }
 
   return <div className="app-shell">
-    <header className="app-header"><div className="brand"><span className="brand-mark"><Icon name="book" /></span><h1>AskBlackboard</h1></div><button type="button" className="icon-button" aria-label="打开设置" title="设置" onClick={/** 点击设置按钮打开个人配置。 */ function showSettings() { setSettingsOpen(true); }}><Icon name="settings" /></button></header>
+    <header className="app-header"><div className="brand"><span className="brand-mark"><Icon name="book" /></span><h1>AskBlackboard</h1></div><button ref={settingsButton} type="button" className="icon-button" aria-label="打开设置" title="设置" onClick={/** 点击设置按钮打开个人配置。 */ function showSettings() { setSettingsOpen(true); }}><Icon name="settings" /></button></header>
     <section className="course-context" aria-label="课程和连接状态">
       <div className="context-label"><span>{assistant.discovery ? '课程' : 'Blackboard'}</span><button type="button" className="text-button refresh-courses" disabled={assistant.discovering || assistant.busy || !assistant.extensionAvailable} onClick={assistant.refreshCourses}><Icon name="refresh" /><span>{assistant.discovering ? '连接中' : '刷新'}</span></button></div>
       <label className="sr-only" htmlFor="course-select">选择课程和教学班</label><div className="course-picker"><select id="course-select" value={assistant.selectedId} disabled={assistant.discovering || assistant.busy || !assistant.discovery} onChange={/** 选择课程同时明确歧义课程的班组。 */ function changeCourse(event) { assistant.selectCourse(event.target.value); }}><option value="">{assistant.discovering ? '正在读取课程…' : assistant.discovery ? '选择一门课程' : '等待连接课程'}</option>{assistant.discovery?.courses.map(/** 每项包含学期与班组，避免同编号课程难以区分。 */ function renderCourse(course) { return <option key={course.courseId} value={course.courseId}>{course.code}{course.section ? ` · ${course.section}` : ''}{course.termLabel ? ` · ${course.termLabel}` : ''}</option>; })}</select><Icon name="chevron" /></div>

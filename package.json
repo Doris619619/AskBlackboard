@@ -10,6 +10,7 @@
     "test": "vitest run",
     "build": "npm run typecheck && node scripts/build.mjs",
     "check": "npm run typecheck && npm run test && npm run build",
+    "test:browser": "npm run build && node scripts/browser-smoke.mjs",
     "package": "npm run build && powershell -NoProfile -File scripts/package.ps1"
   },
   "engines": {
@@ -26,6 +27,7 @@
     "@types/react-dom": "^19.3.0",
     "esbuild": "^0.28.2",
     "jsdom": "^30.1.2",
+    "playwright": "^1.62.1",
     "typescript": "^7.0.2",
     "vite": "^8.3.3",
     "vitest": "^5.0.3"
