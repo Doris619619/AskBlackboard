@@ -22,6 +22,26 @@ function answer(text: string, quote: string, sourceId = 'notice-1', status: Mode
 describe('announcement evidence validation', describeEvidence);
 /** 覆盖关键事实风险，而非仅复刻字段与实现。 */
 function describeEvidence(): void {
+  test('accepts translated relative weekdays without inventing a calendar date', acceptRelativeTranslation);
+  /** 中英文对应可通过；相对时间仍相对于公告，不转换成今天之后的日期。 */
+  function acceptRelativeTranslation(): void {
+    const quote = 'The project sharing takes place next Wednesday.';
+    const data = snapshot(source(quote));
+    expect(validateModelAnswer(answer('分享在该公告所说的下周三，未写具体日期。', quote), data, 'pre啥时候').status).toBe('found');
+    expect(validateModelAnswer(answer('分享在该公告所说的下周，未写具体日期。', quote), data, 'pre啥时候').status).toBe('found');
+    const thisWeek = 'The project sharing takes place this Wednesday.';
+    expect(validateModelAnswer(answer('分享在该公告所说的本周三。', thisWeek), snapshot(source(thisWeek)), 'pre啥时候').status).toBe('found');
+  }
+  test('rejects relative direction, weekday and unsupported absolute date changes', rejectRelativeChanges);
+  /** 翻译支持不能放宽到错星期、错周或无依据的日历日期。 */
+  function rejectRelativeChanges(): void {
+    const quote = 'The project sharing takes place next Wednesday.';
+    for (const text of ['分享在下周四。', '分享在本周三。', '分享在上周三。', '分享在2026年10月21日。']) {
+      expect(() => validateModelAnswer(answer(text, quote), snapshot(source(quote)), 'pre啥时候')).toThrow('公告依据');
+    }
+    const week = 'The sharing takes place next week.';
+    expect(() => validateModelAnswer(answer('分享在下周三。', week), snapshot(source(week)), 'pre啥时候')).toThrow('公告依据');
+  }
   test('accepts a supported date, weekday and duration with whitespace differences', acceptGroundedAnswer);
   /** 英文原文与中文答案共享相同日期事实，引用中的换行差异可定位。 */
   function acceptGroundedAnswer(): void {

@@ -3,6 +3,7 @@ import { AppError } from '../shared/errors';
 import type { AnnouncementSnapshot, ModelAnswer } from '../shared/types';
 import { validateModelAnswer } from './evidence';
 import { buildDataPrompt, SYSTEM_PROMPT } from './prompt';
+import { withModelRecovery, type ModelProgress } from './retry';
 
 export interface AskDeepSeekInput {
   question: string;
@@ -10,10 +11,10 @@ export interface AskDeepSeekInput {
   apiKey: string;
   signal?: AbortSignal;
   model?: string;
+  onProgress?: (progress: ModelProgress) => void;
 }
 
 const ENDPOINT = 'https://api.deepseek.com/chat/completions';
-const TIMEOUT_MS = 60_000;
 
 /** 将 HTTP 失败映射到固定说明；绝不转发原始响应（它可能包含凭据或回显资料）。 */
 function providerError(status: number): AppError {
@@ -34,7 +35,14 @@ function completionContent(payload: unknown): string {
 }
 
 /** 使用调用者提供的密钥生成有依据答案；超时或取消会中止网络读取，失败不清空原有资料。 */
-export async function askDeepSeek({ question, snapshot, apiKey, signal, model = 'deepseek-flash' }: AskDeepSeekInput): Promise<ModelAnswer> {
+export async function askDeepSeek(input: AskDeepSeekInput): Promise<ModelAnswer> {
+  /** 每次重试使用同一轮资料和凭据；不重新采集或创建重复对话。 */
+  function attempt(timeoutMs: number) { return requestOnce(input, timeoutMs); }
+  return withModelRecovery(attempt, input.signal, input.onProgress);
+}
+
+/** 单次调用覆盖响应头和完整正文读取的超时；自动重试由外层统一协调。 */
+async function requestOnce({ question, snapshot, apiKey, signal, model = 'deepseek-flash' }: AskDeepSeekInput, timeoutMs: number): Promise<ModelAnswer> {
   if (!apiKey.trim()) throw new AppError('ai_key_required', '请先在设置中填写 DeepSeek API 密钥。');
   if (!question.trim() || question.length > 2000) throw new AppError('question_invalid', '请填写不超过 2000 字的问题。');
   if (!/^[a-z0-9][a-z0-9._-]{0,79}$/iu.test(model)) throw new AppError('ai_model_invalid', '模型名称无效，请检查设置。');
@@ -43,10 +51,10 @@ export async function askDeepSeek({ question, snapshot, apiKey, signal, model = 
   let timedOut = false;
   /** 用户取消时中止正在进行的请求；不把 abort reason 输出给用户。 */
   function cancel(): void { controller.abort(); }
-  /** 60 秒后关闭本次请求，并与主动取消区分。 */
+  /** 本次预算耗尽后关闭请求，并与主动取消区分。 */
   function timeout(): void { timedOut = true; controller.abort(); }
   signal?.addEventListener('abort', cancel, { once: true });
-  const timer = setTimeout(timeout, TIMEOUT_MS);
+  const timer = setTimeout(timeout, timeoutMs);
   try {
     const response = await fetch(ENDPOINT, {
       method: 'POST',
@@ -63,7 +71,12 @@ export async function askDeepSeek({ question, snapshot, apiKey, signal, model = 
       }),
       signal: controller.signal,
     });
-    if (!response.ok) throw providerError(response.status);
+    if (!response.ok) {
+      const error = providerError(response.status);
+      const retryAfter = response.headers.get('retry-after');
+      if (retryAfter) { const seconds = Number(retryAfter); error.cause = Number.isFinite(seconds) ? seconds * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now()); }
+      throw error;
+    }
     let payload: unknown;
     try { payload = await response.json(); }
     catch { if (controller.signal.aborted) throw new Error(); throw new AppError('ai_invalid_json', 'DeepSeek 返回的内容格式不完整，请重试。'); }
@@ -73,7 +86,7 @@ export async function askDeepSeek({ question, snapshot, apiKey, signal, model = 
     catch { throw new AppError('ai_invalid_json', 'AI 回答不是完整的 JSON，请重试。'); }
     return validateModelAnswer(answer, snapshot, question);
   } catch (error: unknown) {
-    if (timedOut) throw new AppError('ai_timeout', 'DeepSeek 响应超过 60 秒，请重试。');
+    if (timedOut) throw new AppError('ai_timeout', '模型响应暂时超时。');
     if (signal?.aborted || controller.signal.aborted) throw new AppError('cancelled', '已取消本次提问。');
     if (error instanceof AppError) throw error;
     throw new AppError('ai_network', '无法连接 DeepSeek，请检查网络后重试。');

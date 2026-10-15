@@ -4,13 +4,15 @@ import type { Course, CourseDiscovery } from '../shared/types';
 import { assertReadableDocument, plainText } from './dom';
 import { announcementUrl, normalizeCourseCode, schoolUrl, scopedAnnouncementUrl } from './policy';
 
-/** 清除辅助屏幕阅读文字和更新数量，只返回当前学生的显示姓名。 */
+/** 读取导航链接或按钮的可见姓名标签；仅解包此标签的根节点，仍忽略其内部输入框和脚本。 */
 function accountName(document: Document): string {
   const element = document.querySelector('#global-nav-link, #loggedInUserName, #userName, .user-name');
   if (!element) return '';
   const clone = element.cloneNode(true) as Element;
   for (const hidden of clone.querySelectorAll('.hideoff, .badge, .activity-count')) hidden.remove();
-  return plainText(clone).replace(/\s*\d*\s*Activity Updates.*$/i, '').replace(/\s*(?:活动更新|动态更新).*$/, '').trim();
+  const label = document.createElement('span');
+  label.append(...clone.childNodes);
+  return plainText(label).replace(/\s*\d*\s*Activity Updates.*$/i, '').replace(/\s*(?:活动更新|动态更新).*$/, '').trim();
 }
 
 /** 从课程名称取出代码；年份和学期编号不能被误认为课程代码。 */
@@ -49,13 +51,11 @@ export function parseCourseDiscovery(document: Document, pageUrl: string): Cours
   const fallbackEntry = firstAnnouncementLink(module, pageUrl) || firstAnnouncementLink(document, pageUrl);
   const courses: Course[] = [];
   const seen = new Set<string>();
-  const termIds: string[] = [];
   for (const heading of module.querySelectorAll('h3.termHeading-coursefakeclass, h3')) {
     const label = termLabel(heading);
     const termId = label.match(/\b\d{4}(?:UG|PG)\b/i)?.[0]?.toUpperCase() ?? label;
     const group = heading.nextElementSibling;
     if (!termId || !group || !group.querySelector('.courseListing')) continue;
-    termIds.push(termId);
     for (const item of group.querySelectorAll('.courseListing > li')) {
       let launcher: HTMLAnchorElement | undefined;
       let courseId = '';
@@ -77,8 +77,12 @@ export function parseCourseDiscovery(document: Document, pageUrl: string): Cours
     }
   }
   if (!courses.length) throw new AppError('courses_not_found', '没有发现可读取的学生课程，请确认 Blackboard 首页课程列表已加载。');
-  /** 学校学期编号前四位按时间递增；保留全部学期供界面选择，默认使用最新编号。 */
+  /** 只对已发现课程的正式学期编号排序；未分配学期等文字标签不能压过当前编号。 */
   function newestTerm(left: string, right: string): number { return right.localeCompare(left, 'en', { numeric: true }); }
-  const currentTermId = [...new Set(termIds)].sort(newestTerm)[0] ?? courses[0].termId;
+  /** 保留全部课程供手动选择，默认学期只采用学校的四位 UG/PG 编号。 */
+  function numberedTerm(course: Course): boolean { return /^\d{4}(?:UG|PG)$/.test(course.termId); }
+  /** 从实际读到的课程取学期，不把空分组或无法识别的课程当作默认学期。 */
+  function courseTerm(course: Course): string { return course.termId; }
+  const currentTermId = [...new Set(courses.filter(numberedTerm).map(courseTerm))].sort(newestTerm)[0] ?? courses[0].termId;
   return { courses, currentTermId, accountName: name };
 }

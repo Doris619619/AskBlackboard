@@ -32,6 +32,20 @@ describe('Blackboard DOM parsing', () => {
   });
   /** 防止课程代码归一化把空格和大小写当成不同课程编号。 */
   it('normalizes typed course codes', () => { expect(normalizeCourseCode('ged 2005')).toBe('GED2005'); });
+  /** 无学期课程仍可选；无学期标题或没有有效课程的较新分组都不能覆盖真实当前学期。 */
+  it('prefers the latest numbered term with readable courses over unassigned and empty terms', () => {
+    const document = parseHtml(`<a id="global-nav-link">Example Student</a><a href="${course.announcementUrl}">Announcements</a><div id="My_Courses_Tools"><h3>No Term Assigned</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&id=_701_1">MAT1001 Unassigned</a></li></ul></div><h3>2710UG</h3><div><ul class="courseListing"></ul></div><h3>2610UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&id=_700_1">GED2005 L01 Test Course</a></li></ul></div></div>`);
+    const result = parseCourseDiscovery(document, PORTAL_URL);
+    expect(result.currentTermId).toBe('2610UG');
+    expect(result.courses).toHaveLength(2);
+    expect(result.courses[0].termId).toBe('No Term Assigned');
+  });
+  /** 学校导航姓名实际是 button；读取其显示文字，但不扩大通用正文读取对按钮/表单的权限。 */
+  it('discovers the account label from a navigation button without reading form values', () => {
+    const document = parseHtml(`<button id="global-nav-link"><img alt="avatar">Example Student<span class="hideoff">Activity Updates</span><span class="badge">16</span><input value="private"><script>private</script></button><div id="My_Courses_Tools"><h3>2610UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&id=_700_1">GED2005 L01 Test Course</a><a href="${course.announcementUrl}">Announcements</a></li></ul></div></div>`);
+    expect(parseCourseDiscovery(document, PORTAL_URL).accountName).toBe('Example Student');
+    expect(plainText(document.querySelector('#global-nav-link'))).toBe('');
+  });
   /** Welcome 正文可能位于 MessageUniqueBody 外面，必须保留完整容器并排除发布人元信息。 */
   it('keeps text before MessageUniqueBody and nested paragraph boundaries', () => {
     const document = page(item('_901_1', 'Welcome and quiz schedule', '<p>Welcome to this course.</p><div id="Item.MessageUniqueBody"><p>Quiz 1 is on October 12.</p><div><p>The duration is 20 minutes.</p><ul><li>Bring a pencil.</li></ul></div></div>'));

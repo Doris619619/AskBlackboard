@@ -1,4 +1,4 @@
-/** 文件用途：只接收扩展受信后台的有限读取消息，使用当前 Blackboard 登录来源读取门户和公告。 */
+/** 文件用途：只接收扩展受信后台的有限读取消息，使用当前 Blackboard 登录来源读取门户、公告和作业列表。 */
 import { AppError, friendlyError } from '../shared/errors';
 import type { RuntimeResult } from '../shared/types';
 import { parseAnnouncementPage } from '../blackboard/announcements';
@@ -7,6 +7,7 @@ import { parseCourseDiscovery } from '../blackboard/discovery';
 import { highlightSource } from '../blackboard/highlight';
 import { isCourse, isTrustedExtensionSender, type ContentMessage } from '../blackboard/messages';
 import { announcementUrl, isPortalUrl } from '../blackboard/policy';
+import { readCourseAssignments, parseAssignmentPage } from '../blackboard/assignments';
 
 /** 执行内部只读动作；任何未经验证的 URL、课程对象和未知动作都会失败。 */
 async function handleMessage(raw: unknown): Promise<unknown> {
@@ -21,6 +22,12 @@ async function handleMessage(raw: unknown): Promise<unknown> {
     case 'read_announcements':
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请重新读取课程列表。');
       return readCourseAnnouncements(message.course);
+    case 'read_assignments':
+      if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
+      return readCourseAssignments(message.course);
+    case 'read_assignment_page':
+      if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
+      return parseAssignmentPage(document, location.href, message.course);
     case 'read_announcement_page':
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请重新读取课程列表。');
       if (typeof message.url !== 'string') throw new AppError('invalid_message', '公告分页地址无效。');

@@ -62,7 +62,7 @@ function describeRequests(): void {
     vi.stubGlobal('fetch', fetchMock);
     await expect(askDeepSeek({ question: 'quiz什么时候', snapshot: fixture(), apiKey: 'test-only-placeholder' })).rejects.toMatchObject({ code: 'ai_network' });
     await expect(askDeepSeek({ question: 'quiz什么时候', snapshot: fixture(), apiKey: '' })).rejects.toMatchObject({ code: 'ai_key_required' });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   }
   test('cancels an in-flight request', validateCancellation);
   /** 取消用AbortSignal关闭网络，而不是仅隐藏界面结果。 */
@@ -73,14 +73,14 @@ function describeRequests(): void {
     controller.abort();
     await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
   }
-  test('times out after 60 seconds', validateTimeout);
+  test('automatically retries timeout once before ending', validateTimeout);
   /** 假时钟验证完整超时路径，不需要实际等待或访问网络。 */
   async function validateTimeout(): Promise<void> {
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn(pendingFetch));
     const pending = askDeepSeek({ question: 'quiz什么时候', snapshot: fixture(), apiKey: 'test-only-placeholder' });
     const assertion = expect(pending).rejects.toMatchObject({ code: 'ai_timeout' });
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(151_500);
     await assertion;
   }
 }
