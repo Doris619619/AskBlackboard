@@ -21,7 +21,7 @@ function SourceRow({ source, quotes = [] }: { source: SourceEvidence; quotes?: s
     try { await openSource(source, quotes[0]); } catch (caught) { setError(friendlyError(caught)); }
     finally { setOpening(false); }
   }
-  return <details className="source-row">
+  return <details className="source-row" open={quotes.length > 0 ? true : undefined}>
     <summary><span className="source-title">{source.title}</span><Icon name="chevron" /></summary>
     <div className="source-detail">
       {source.publishedAt && <p className="source-date">发布于 {source.publishedAt}</p>}
@@ -46,8 +46,8 @@ export function Sources({ snapshot, citations = [] }: { snapshot: AnnouncementSn
   }
   const cited = [...grouped.values()];
   return <div className="sources">
-    {cited.length > 0 && <div className="cited-sources"><p className="section-caption">引用来源 · {cited.length}</p>{cited.map(/** 默认收起原文，同一公告只显示一个条目。 */ function renderCitation(item) { return <SourceRow key={item.source.sourceId} source={item.source} quotes={item.quotes} />; })}</div>}
-    <details className="all-sources"><summary><span>{snapshot.scope === 'assignments' ? '已查作业说明' : '已查课程公告'} · {snapshot.sources.length} 条</span><Icon name="chevron" /></summary><div className="all-sources-list">{snapshot.sources.length === 0 ? <p className="muted">已读范围没有可见条目。</p> : snapshot.sources.map(/** 展开全部公告时不筛掉可能被模型遗漏的条目。 */ function renderSource(source) { return <SourceRow key={source.sourceId} source={source} />; })}</div></details>
+    {cited.length > 0 && <div className="cited-sources"><p className="section-caption">引用来源 · {cited.length}</p>{cited.map(/** 直接展示引用原话，同一公告只显示一个条目。 */ function renderCitation(item) { return <SourceRow key={item.source.sourceId} source={item.source} quotes={item.quotes} />; })}</div>}
+    <details className="all-sources"><summary><span>{snapshot.scope === 'deadlines' ? '已查公告与作业说明' : snapshot.scope === 'assignments' ? '已查作业说明' : '已查课程公告'} · {snapshot.sources.length} 条</span><Icon name="chevron" /></summary><div className="all-sources-list">{snapshot.scope === 'deadlines' && <p className="muted">读取范围：课程公告、内容列表中的作业说明；不读取附件或提交页。</p>}{snapshot.sources.length === 0 ? <p className="muted">已读范围没有可见条目。</p> : snapshot.sources.map(/** 展开全部公告时不筛掉可能被模型遗漏的条目。 */ function renderSource(source) { return <SourceRow key={source.sourceId} source={source} />; })}</div></details>
     <p className="retrieval-time">检索于 {formatFetchedTime(snapshot.fetchedAt)}（北京时间）{snapshot.coverage.status === 'partial' ? ' · 读取不完整' : ''}</p>
     {snapshot.coverage.warnings.length > 0 && <p className="inline-error">{snapshot.coverage.warnings.join('；')}</p>}
   </div>;

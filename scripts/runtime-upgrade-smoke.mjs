@@ -53,7 +53,7 @@ try {
   await fresh.getByText('已连接 Blackboard', { exact: true }).waitFor();
   await fresh.getByRole('textbox', { name: '输入课程问题' }).fill('GED2005作业什么时候截止');
   await fresh.getByRole('button', { name: '发送问题', exact: true }).click();
-  await fresh.locator('.answer-text').filter({ hasText: 'The deadline is 21:30, 22 Nov 2026.' }).waitFor();
+  await fresh.locator('.deadline-quote').filter({ hasText: 'The deadline is 21:30, 22 Nov 2026.' }).waitFor();
   assert.equal(modelCalls, 0);
   await fresh.screenshot({ path: 'artifacts/browser-smoke/runtime-recovered.png' });
   console.log('PASS old background detected, user-triggered reload, settings retained, assignment query recovered without AI');

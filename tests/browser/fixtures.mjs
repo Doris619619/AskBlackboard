@@ -16,6 +16,10 @@ export const gebPreparation = 'Prepare a short introduction.';
 export const gebAnnouncements = `<html><body><select id="searchSelectId"><option selected value="_702_1">GEB2509 L01</option></select><ul id="announcementList"><li id="_902_1"><h3 class="item">Project presentation</h3><div class="details"><p>Posted on: October 14, 2026</p><div class="vtbegenerated"><p>${gebQuote}</p><p>${gebPreparation}</p></div></div></li></ul></body></html>`;
 export const gebFound = { status: 'found', answer: 'GEB2509 的项目展示在2026年10月30日。公告没有写具体开始时刻。', citations: [{ sourceId: '_902_1', quote: gebQuote }, { sourceId: '_902_1', quote: gebPreparation }] };
 
+export const reportAnnouncementUrl = announcementUrl.replace('_700_1', '_703_1');
+export const reportPortal = portal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&id=_703_1">ECE3810 LAB1LAB2 Example Laboratory</a><a href="${reportAnnouncementUrl}">Announcements</a></li></ul></div><h3>No Term Assigned`);
+export const reportAnnouncements = `<html><body><select id="searchSelectId"><option selected value="_703_1">ECE3810</option></select><ul id="announcementList"><li id="_903_1"><h3 class="item">Lab 1 Submission: Report and Code</h3><div class="details"><div class="vtbegenerated"><p>Lab 1 report and code are open.</p><p>L01 — due 19:00, Tuesday, 17 November 2026</p><p>Lab 1 Report</p><p>Lab 1 Code</p><p>L02 — due 20:00, Thursday, 19 November 2026</p><p>Lab 1 Report</p><p>Lab 1 Code</p></div></div></li></ul></body></html>`;
+
 /** 包装确定性模型回复，只验证扩展传输、校验和展示链路，不代表真实模型质量。 */
 export function completion(answer) { return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(answer) } }] }; }
 

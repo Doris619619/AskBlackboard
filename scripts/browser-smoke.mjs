@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl, assignmentRoot, assignmentListing } from '../tests/browser/fixtures.mjs';
+import { reportPortal, reportAnnouncements } from '../tests/browser/fixtures.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
 await mkdir(output, { recursive: true });
@@ -38,12 +39,12 @@ async function schoolRoute(route) {
   const url = new URL(route.request().url());
   if (/uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
   if (!loggedIn) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
-  if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: portal });
+  if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: reportPortal });
   if (url.pathname.endsWith('/courseMain')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentRoot(url.searchParams.get('course_id')) }); }
   if (url.pathname.endsWith('/listContent.jsp')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentListing(url.searchParams.get('course_id')) }); }
   if (url.pathname.endsWith('/announcement')) {
     announcementReads += 1;
-    return route.fulfill({ contentType: 'text/html', body: url.searchParams.get('searchSelect') === '_702_1' ? gebAnnouncements : announcements });
+    return route.fulfill({ contentType: 'text/html', body: url.searchParams.get('searchSelect') === '_703_1' ? reportAnnouncements : url.searchParams.get('searchSelect') === '_702_1' ? gebAnnouncements : announcements });
   }
   return route.abort();
 }
@@ -98,16 +99,15 @@ try {
   passed('actual extension worker + content script discover course');
 
   await ask('GED2005最新的作业在啥时候截止');
-  await panel.locator('.answer-text').filter({ hasText: 'The deadline is 21:30, 22 Nov 2026.' }).waitFor();
+  await panel.locator('.deadline-quote').filter({ hasText: 'The deadline is 21:30, 22 Nov 2026.' }).waitFor();
   assert.equal(modelCalls, 0);
   assert.equal(assignmentReads, 2);
   assert.equal(await panel.getByRole('dialog').count(), 0);
-  assert.equal(await panel.locator('.answer-status').innerText(), '课程页面 · 直接读取，不依赖 AI');
+  assert.equal(await panel.locator('.deadline-time').innerText(), '2026年11月22日 21:30');
   await panel.screenshot({ path: path.join(output, 'assignment-deadline.png') });
   passed('assignment deadlines work without API key or model requests');
-  await panel.locator('.cited-sources .source-row > summary').click();
   const assignmentSourcePromise = context.waitForEvent('page');
-  await panel.getByRole('button', { name: '打开作业所在列表' }).click();
+  await panel.getByRole('button', { name: '来源：Assignment1' }).click();
   const assignmentSource = await assignmentSourcePromise;
   await assignmentSource.waitForURL('**/listContent.jsp?course_id=_700_1&content_id=_900_1#_910_1');
   // 离线首次导航可能进入浏览器错误页；明确重新导航到已断言的虚构列表。
@@ -121,6 +121,28 @@ try {
   assert.equal(unsafeRequests, 0);
   await assignmentSource.close();
   passed('assignment evidence opens and highlights a read-only list, never a submission endpoint');
+  await panel.reload(); await visible('已连接 Blackboard');
+
+  await ask('ece3810的report1的ddl是啥时候');
+  await panel.locator('.deadline-time').filter({ hasText: '2026年11月19日 20:00' }).waitFor();
+  assert.equal(await panel.locator('.deadline-item').count(), 2);
+  assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '_703_1');
+  assert.equal(modelCalls, 0);
+  assert.match(await panel.locator('.all-sources > summary').innerText(), /公告与作业/);
+  assert.equal(await panel.locator('.deadline-quote').count(), 2);
+  assert.match(await panel.locator('.deadline-heading').first().innerText(), /L01/);
+  assert.match(await panel.locator('.deadline-heading').last().innerText(), /L02/);
+  await panel.screenshot({ path: path.join(output, 'report-deadlines.png') });
+  passed('report1 ddl searches announcements and assignments without AI and shows separate section times, quotes and sources');
+  await panel.setViewportSize({ width: 320, height: 844 });
+  await panel.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
+  assert.equal(await panel.evaluate(function noDeadlineOverflow() { return document.documentElement.scrollWidth <= innerWidth; }), true);
+  await panel.screenshot({ path: path.join(output, 'report-deadlines-dark-narrow.png') });
+  await panel.setViewportSize({ width: 191, height: 424 });
+  assert.equal(await panel.evaluate(function narrowDeadlineOverflow() { return document.documentElement.scrollWidth <= innerWidth; }), true);
+  await panel.emulateMedia({ colorScheme: 'light', reducedMotion: 'no-preference' });
+  await panel.setViewportSize({ width: 390, height: 844 });
+  passed('deadline results remain readable in dark mode and 320px/191px layouts without horizontal overflow');
   await panel.reload(); await visible('已连接 Blackboard');
 
   await panel.getByRole('button', { name: '打开设置', exact: true }).click();
@@ -149,8 +171,7 @@ try {
   passed('keyboard + actual collection + model contract + visible answer');
 
   const sourcePromise = context.waitForEvent('page');
-  assert.equal(await panel.locator('.cited-sources .source-row[open]').count(), 0);
-  await panel.locator('.cited-sources .source-row > summary').first().click();
+  assert.equal(await panel.locator('.cited-sources .source-row[open]').count(), 1);
   await panel.locator('.cited-sources').getByRole('button', { name: '打开公告原文' }).first().click();
   const source = await sourcePromise;
   await source.waitForURL(`${announcementUrl}#_901_1`);
@@ -261,7 +282,6 @@ try {
   passed('GEB abbreviation overrides selected GED; model receives only GEB evidence');
   assert.equal(await panel.locator('.conversation-turn').last().locator('.cited-sources .source-row').count(), 1);
   const gebSourcePromise = context.waitForEvent('page');
-  await panel.locator('.conversation-turn').last().locator('.cited-sources .source-row > summary').click();
   assert.equal(await panel.locator('.conversation-turn').last().locator('.cited-sources blockquote').count(), 2);
   await panel.locator('.conversation-turn').last().getByRole('button', { name: '打开公告原文' }).first().click();
   const gebSource = await gebSourcePromise;

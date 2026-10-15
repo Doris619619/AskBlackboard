@@ -38,7 +38,7 @@ export function parseAssignmentPage(document: Document, pageUrl: string, course:
     catch { warnings.push('一个内容条目的链接无效，已跳过。'); continue; }
     if (/folder|文件夹/i.test(icon) || headingUrl?.pathname === CONTENT_PATH) continue;
     if (/test|quiz|测验|考试/i.test(icon) || /assessment|launchAssessment/i.test(headingLink)) continue;
-    if (!/assignment|作业/i.test(icon) && !headingLink.includes('/webapps/assignment/uploadAssignment') && !/assignment|homework|作业|\bhw\s*\d/i.test(title)) continue;
+    if (!/assignment|作业/i.test(icon) && !headingLink.includes('/webapps/assignment/uploadAssignment') && !/assignment|homework|作业|report|报告|project|项目|\bhw\s*\d/i.test(title)) continue;
     if (headingLink.includes('/webapps/assignment/uploadAssignment')) {
       const target = headingUrl!;
       if (target.origin !== url.origin || target.searchParams.get('course_id') !== course.courseId) { warnings.push('一个作业条目的课程范围不匹配，已跳过。'); continue; }

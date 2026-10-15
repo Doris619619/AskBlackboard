@@ -46,11 +46,15 @@ flowchart LR
 
 ## 作业截止直读
 
-`deadlines.ts` 识别“作业/assignment/homework + 截止/due/when”等意图，沿用同一课程消歧规则；通过 `collect_assignments` → `read_assignments` 获取快照，不要求密钥也不调用模型。其他问题仍走公告 AI 路径。
+`deadlines.ts` 识别作业、report/报告、lab/实验、project/项目、code/代码与截止/ddl/due/when意图，沿用课程消歧。`deadline-client.ts` 并行调用既有公告和作业采集接口，返回scope=deadlines的联合快照，不要求密钥或模型。单路传输失败保留成功证据并标记partial；身份、课程或协议错误阻止回答，两路均失败不能返回空列表。其他问题走公告AI路径。
 
 `assignment-policy.ts` 只允许同课程的 courseMain、modulepage/view 和 content/listContent.jsp 及严格参数。`assignments.ts` 从课程导航和列表标题发现文件夹，最多40页、约60秒遍历预算，单次同源请求15秒；后续失败标记 partial。支持同源请求和专用渲染标签页两条路线。提交链接只用来识别作业类型，绝不加入读取队列。仅读取 `.vtbegenerated` 和 Due Date 等标签字段；附件、测验和表单值不读取。
 
 快照新增可选 `scope: assignments`；来源新增 `kind: assignment`，sourceId带assignment前缀，URL始终为所在内容列表。回答 `mode: extracted`，直接引用带截止含义的原文，不转换相对日期或猜测时区。指定作业编号时不借其他作业日期；多项无可靠发布时间时不认定“最新”。缺字段、超过范围或失败明确说明，不能代表课程不存在作业。出处打开列表并高亮真实条目。
+
+`deadline-task.ts` 区分任务类型及编号；完整编号直接匹配，Lab N + Report只建立相关候选，不由同编号推断代码/报告为同一任务。按行内名称或标题范围绑定截止句，后续不同任务编号清除前一任务范围。保留L01/L02班组标记，不从合班课程名称推断用户班组。`deadline-time.ts` 只格式化明确单日期和钟点，保留原话；多日期、条件、否定、相对日期回退原话，不用Date.parse猜日历和时区。
+
+回答新增deadlines和notices字段，DeadlineAnswer组件按“班组/时间/原话/来源按钮”呈现。截止摘录与来源绑定，读取范围放入全部资料折叠区；不完整和候选提示仍可见。AI时间问题提示词要求简短回答，引用默认展开。窗口级sidePanel仍沿用现有行为，不扩大学校内容脚本注入或网络读取权限。
 
 ## 界面与恢复
 

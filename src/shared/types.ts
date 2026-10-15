@@ -29,7 +29,7 @@ export interface SourceEvidence {
 }
 
 export interface AnnouncementSnapshot {
-  scope?: 'announcements' | 'assignments';
+  scope?: 'announcements' | 'assignments' | 'deadlines';
   course: Course;
   sources: SourceEvidence[];
   fetchedAt: string;
@@ -38,6 +38,8 @@ export interface AnnouncementSnapshot {
 
 export interface Citation { sourceId: string; quote: string }
 export interface ModelAnswer {
+  deadlines?: { sourceId: string; title: string; time: string; quote: string; section?: string; tentative?: boolean }[];
+  notices?: string[];
   mode?: 'ai' | 'extracted';
   status: 'found' | 'not_found' | 'conflict';
   answer: string;

@@ -8,6 +8,7 @@ import { useAssistant } from './use-assistant';
 import type { Turn } from './use-assistant';
 import { isAssignmentDeadlineQuestion } from '../blackboard/deadlines';
 import { reloadExtension } from '../shared/browser-client';
+import { DeadlineAnswer } from './deadline-answer';
 
 /** 展示单次问题的进行状态或有出处回答；模型失败时依然提供已经读取的资料。 */
 function ConversationTurn({ turn, busy, onRetry }: { turn: Turn; busy: boolean; onRetry: (turn: Turn) => void }) {
@@ -17,11 +18,11 @@ function ConversationTurn({ turn, busy, onRetry }: { turn: Turn; busy: boolean; 
     <div className="question-message"><p>{turn.question}</p></div>
     <div className="assistant-message">
       <p className="answer-label"><span className="mini-brand"><Icon name="book" /></span><span>{turn.course.code}{turn.course.section ? ` · ${turn.course.section}` : ''}</span><span className="answer-term">{turn.course.termLabel}</span></p>
-      {working && <div className="progress-message" role="status"><span className="activity-dot" />{turn.stage === 'reading' ? (isAssignmentDeadlineQuestion(turn.question) ? '正在读取作业列表和截止信息…' : '正在读取最新课程公告…') : turn.progress || '正在核对问题与公告原文…'}</div>}
-      <div className="answer-content" role="status" aria-atomic="true">{turn.answer && <><p className="answer-status">{turn.answer.mode === 'extracted' ? '课程页面 · 直接读取，不依赖 AI' : answerLabels[turn.answer.status]}</p><p className="answer-text">{turn.answer.answer}</p></>}</div>
+      {working && <div className="progress-message" role="status"><span className="activity-dot" />{turn.stage === 'reading' ? (isAssignmentDeadlineQuestion(turn.question) ? '正在核对公告和作业截止信息…' : '正在读取最新课程公告…') : turn.progress || '正在核对问题与公告原文…'}</div>}
+      <div className="answer-content" role="status" aria-atomic="true">{turn.answer && (turn.answer.deadlines && turn.snapshot ? <DeadlineAnswer answer={turn.answer} snapshot={turn.snapshot} /> : <><p className="answer-status">{answerLabels[turn.answer.status]}</p><p className="answer-text">{turn.answer.answer}</p></>)}</div>
       {turn.error && <div className="turn-error" role="alert"><p>{turn.error}</p><button className="text-button" type="button" disabled={busy} onClick={/** 使用现有证据重试本条问题。 */ function handleRetry() { onRetry(turn); }}><Icon name="refresh" /><span>重试{turn.snapshot ? '回答' : '读取'}</span></button></div>}
       {turn.stage === 'cancelled' && <div className="turn-error" role="status"><p>已停止。{turn.snapshot ? '已读取的资料保留在下面。' : '尚未完成资料读取。'}</p><button className="text-button" type="button" disabled={busy} onClick={/** 停止后仍允许继续该问题。 */ function handleResume() { onRetry(turn); }}>重新尝试</button></div>}
-      {turn.snapshot && <Sources snapshot={turn.snapshot} citations={turn.answer?.citations} />}
+      {turn.snapshot && <Sources snapshot={turn.snapshot} citations={turn.answer?.deadlines ? undefined : turn.answer?.citations} />}
     </div>
   </article>;
 }

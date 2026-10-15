@@ -2,7 +2,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { defaultCourse, resolveCourse } from '../blackboard/course-resolution';
 import { askDeepSeek } from '../ai/deepseek';
-import { collectAnnouncements, collectAssignments, discoverCourses } from '../shared/browser-client';
+import { collectAnnouncements, discoverCourses } from '../shared/browser-client';
+import { collectDeadlineSources } from '../shared/deadline-client';
 import { isAssignmentDeadlineQuestion, answerAssignmentDeadlines } from '../blackboard/deadlines';
 import { AppError, friendlyError } from '../shared/errors';
 import { loadSettings, saveSettings } from '../shared/settings';
@@ -99,7 +100,7 @@ export function useAssistant() {
     let snapshot = previousSnapshot;
     try {
       const deadlineQuestion = isAssignmentDeadlineQuestion(question);
-      if (!snapshot) snapshot = await (deadlineQuestion ? collectAssignments(course) : collectAnnouncements(course));
+      if (!snapshot) snapshot = await (deadlineQuestion ? collectDeadlineSources(course) : collectAnnouncements(course));
       if (token !== sequence.current) return;
       updateTurn(id, { snapshot, stage: 'answering' }); setConnectionError('');
       const answer = deadlineQuestion ? answerAssignmentDeadlines(question, snapshot) : await askDeepSeek({ question, snapshot, apiKey: settings.apiKey, model: settings.model, signal: abort.signal,
