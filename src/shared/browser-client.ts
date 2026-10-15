@@ -14,5 +14,7 @@ async function request<T>(message: ExtensionMessage): Promise<T> {
 export function discoverCourses(): Promise<CourseDiscovery> { return request({ type: 'discover_courses' }); }
 /** 实时读取指定课程全部可见公告，返回资料覆盖状态。 */
 export function collectAnnouncements(course: Course): Promise<AnnouncementSnapshot> { return request({ type: 'collect_announcements', course }); }
+/** 读取指定课程的只读内容列表与作业说明，不访问提交入口。 */
+export function collectAssignments(course: Course): Promise<AnnouncementSnapshot> { return request({ type: 'collect_assignments', course }); }
 /** 在 Blackboard 打开保存的来源并定位引用段落。 */
 export function openSource(source: SourceEvidence, quote?: string): Promise<void> { return request({ type: 'open_source', source, quote }); }

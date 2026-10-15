@@ -3,7 +3,7 @@ import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl } from '../tests/browser/fixtures.mjs';
+import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl, assignmentRoot, assignmentListing } from '../tests/browser/fixtures.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
 await mkdir(output, { recursive: true });
@@ -23,6 +23,8 @@ let loggedIn = true;
 let modelMode = 'ok';
 let announcementReads = 0;
 let modelCalls = 0;
+let unsafeRequests = 0;
+let assignmentReads = 0;
 let releasePending;
 const checks = [];
 const pageErrors = [];
@@ -34,8 +36,11 @@ function passed(name) { checks.push(name); console.log(`PASS ${name}`); }
 /** 所有学校请求只返回虚构门户/公告，不连接学校，也不读取个人登录状态。 */
 async function schoolRoute(route) {
   const url = new URL(route.request().url());
+  if (/uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
   if (!loggedIn) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
   if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: portal });
+  if (url.pathname.endsWith('/courseMain')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentRoot(url.searchParams.get('course_id')) }); }
+  if (url.pathname.endsWith('/listContent.jsp')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentListing(url.searchParams.get('course_id')) }); }
   if (url.pathname.endsWith('/announcement')) {
     announcementReads += 1;
     return route.fulfill({ contentType: 'text/html', body: url.searchParams.get('searchSelect') === '_702_1' ? gebAnnouncements : announcements });
@@ -46,6 +51,7 @@ async function schoolRoute(route) {
 /** 用受控响应覆盖模型接口；不会将测试占位密钥或虚构资料发送给提供商。 */
 async function modelRoute(route) {
   modelCalls += 1;
+  if (modelMode === 'transient-once') { modelMode = 'ok'; return route.fulfill({ status: 503, json: { error: 'temporary' } }); }
   const payload = route.request().postDataJSON();
   const data = JSON.parse(payload.messages[1].content).DATA;
   assert.equal(data.sources.length, 1);
@@ -90,6 +96,32 @@ try {
   await visible('已连接 Blackboard');
   assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '');
   passed('actual extension worker + content script discover course');
+
+  await ask('GED2005最新的作业在啥时候截止');
+  await panel.locator('.answer-text').filter({ hasText: 'The deadline is 21:30, 22 Nov 2026.' }).waitFor();
+  assert.equal(modelCalls, 0);
+  assert.equal(assignmentReads, 2);
+  assert.equal(await panel.getByRole('dialog').count(), 0);
+  assert.equal(await panel.locator('.answer-status').innerText(), '课程页面 · 直接读取，不依赖 AI');
+  await panel.screenshot({ path: path.join(output, 'assignment-deadline.png') });
+  passed('assignment deadlines work without API key or model requests');
+  await panel.locator('.cited-sources .source-row > summary').click();
+  const assignmentSourcePromise = context.waitForEvent('page');
+  await panel.getByRole('button', { name: '打开作业所在列表' }).click();
+  const assignmentSource = await assignmentSourcePromise;
+  await assignmentSource.waitForURL('**/listContent.jsp?course_id=_700_1&content_id=_900_1#_910_1');
+  // 离线首次导航可能进入浏览器错误页；明确重新导航到已断言的虚构列表。
+  await assignmentSource.goto('https://bb.cuhk.edu.cn/webapps/blackboard/content/listContent.jsp?course_id=_700_1&content_id=_900_1#_910_1');
+  const assignmentHighlight = await worker.evaluate(async function highlightAssignment() {
+    const tabs = await chrome.tabs.query({ url: 'https://bb.cuhk.edu.cn/*' });
+    const tab = tabs.find(t => t.url.includes('#_910_1'));
+    return chrome.tabs.sendMessage(tab.id, { type: 'highlight_source', sourceId: 'assignment:_910_1', quote: 'The deadline is 21:30, 22 Nov 2026.' });
+  });
+  assert.equal(assignmentHighlight.ok, true);
+  assert.equal(unsafeRequests, 0);
+  await assignmentSource.close();
+  passed('assignment evidence opens and highlights a read-only list, never a submission endpoint');
+  await panel.reload(); await visible('已连接 Blackboard');
 
   await panel.getByRole('button', { name: '打开设置', exact: true }).click();
   await panel.getByLabel('API 密钥', { exact: true }).fill('sk-browser-fixture-placeholder');
@@ -159,6 +191,15 @@ try {
   await panel.locator('.conversation-turn').last().getByText(found.answer, { exact: true }).waitFor();
   assert.equal(announcementReads, readsBeforeRetry);
   passed('provider failure preserves sources; retry reuses same snapshot');
+
+  modelMode = 'transient-once';
+  const callsBeforeRecovery = modelCalls;
+  const readsBeforeRecovery = announcementReads;
+  await ask('Quiz 1 是什么时候？');
+  await panel.locator('.conversation-turn').last().getByText(found.answer, { exact: true }).waitFor();
+  assert.equal(modelCalls - callsBeforeRecovery, 2);
+  assert.equal(announcementReads - readsBeforeRecovery, 1);
+  passed('temporary model outage automatically recovers in the same turn without re-reading school data');
 
   modelMode = 'invalid';
   await ask('Quiz 1 是什么时候？');
@@ -238,6 +279,7 @@ try {
   }
   passed('ambiguous and unknown course requests preserve draft without collection or model calls');
   assert.deepEqual(pageErrors, []);
+  assert.equal(unsafeRequests, 0);
   await writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', kind: 'real-extension-synthetic-network', browser: context.browser()?.version(), checks, announcementReads, modelCalls }, null, 2));
 } catch (error) {
   await panel?.screenshot({ path: path.join(output, 'failure.png') }).catch(function ignoreScreenshotFailure() {});

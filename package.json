@@ -2,7 +2,7 @@
   "name": "ask-blackboard",
   "version": "0.1.0",
   "private": true,
-  "description": "读取 Blackboard 课程公告并提供有出处的 AI 问答的个人浏览器扩展。",
+  "description": "读取 Blackboard 课程公告和作业截止时间并提供原文依据的个人浏览器扩展。",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",

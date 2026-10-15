@@ -5,6 +5,8 @@ import { MAX_ANNOUNCEMENT_PAGES } from '../blackboard/collector';
 import type { ParsedAnnouncementPage } from '../blackboard/announcements';
 import { isCourse, isTrustedExtensionSender, type ContentMessage } from '../blackboard/messages';
 import { announcementUrl, BLACKBOARD_ORIGIN, PORTAL_URL, isPortalUrl } from '../blackboard/policy';
+import { assignmentReadUrl, assignmentEntry, CONTENT_PATH } from '../blackboard/assignment-policy';
+import { readCourseAssignments, type AssignmentPage } from '../blackboard/assignments';
 
 const TAB_TIMEOUT_MS = 20000;
 
@@ -78,11 +80,15 @@ async function blackboardTab(): Promise<number> {
 /** 判断需用户正常登录或同意学校条款的失败，备用传输不能绕过这些页面。 */
 function requiresUserAction(error: unknown): boolean { return error instanceof AppError && ['login_required', 'consent_required', 'unsafe_url', 'invalid_course', 'account_unknown'].includes(error.code); }
 
-/** 创建属于本轮的备用标签页，读取完成即关闭，只处理学校门户或公告地址。 */
+/** 创建属于本轮的备用标签页，读取完成即关闭，只处理经过校验的学校只读地址。 */
 async function fallbackTab<T>(url: string, operation: (tabId: number) => Promise<T>): Promise<T> {
-  if (!isPortalUrl(url)) announcementUrl(url);
+  if (!isPortalUrl(url)) {
+    const target = new URL(url);
+    if (target.searchParams.has('course_id') && target.pathname !== '/webapps/blackboard/execute/announcement') assignmentReadUrl(url, target.searchParams.get('course_id')!);
+    else announcementUrl(url);
+  }
   const tab = await chrome.tabs.create({ url, active: false });
-  if (tab.id === undefined) throw new AppError('tab_unavailable', '无法打开专用公告读取页面。');
+  if (tab.id === undefined) throw new AppError('tab_unavailable', '无法打开专用资料读取页面。');
   try { await waitForTab(tab.id); return await operation(tab.id); }
   finally { try { await chrome.tabs.remove(tab.id); } catch { /* 用户已经关闭专用页时无需重建或关闭其他页面。 */ } }
 }
@@ -156,10 +162,29 @@ async function collect(tabId: number, course: Course): Promise<AnnouncementSnaps
   }
 }
 
-/** 验证来源属于课程公告后打开原文，再让内容脚本定位该公告和引用段落。 */
+/** 同源读取不支持时复用专用只读标签页，统一遍历规则与页面数量上限。 */
+async function collectAssignments(tabId: number, course: Course): Promise<AnnouncementSnapshot> {
+  try { return await sendContent<AnnouncementSnapshot>(tabId, { type: 'read_assignments', course }); }
+  catch (error) { if (requiresUserAction(error)) throw error; }
+  /** 专用标签页只导航经过同课程白名单验证的课程入口或内容列表。 */
+  async function readRenderedAssignments(id: number): Promise<AnnouncementSnapshot> {
+    let first = true;
+    /** 页面加载后调用相同解析器，任何提交、作答与附件链接都不能进入队列。 */
+    async function readPage(url: string): Promise<AssignmentPage> {
+      if (!first) { await chrome.tabs.update(id, { url: assignmentReadUrl(url, course.courseId).href }); await waitForTab(id); }
+      first = false;
+      return readRendered<AssignmentPage>(id, { type: 'read_assignment_page', course });
+    }
+    return readCourseAssignments(course, readPage);
+  }
+  return fallbackTab(assignmentEntry(course.courseId), readRenderedAssignments);
+}
+
+/** 验证来源属于课程公告或作业列表后打开原文，再让内容脚本定位该公告和引用段落。 */
 async function openSource(source: SourceEvidence, quote?: string): Promise<void> {
   if (!source || typeof source.url !== 'string' || typeof source.courseId !== 'string' || typeof source.sourceId !== 'string' || source.sourceId.length > 256 || (quote !== undefined && (typeof quote !== 'string' || quote.length > 10000))) throw new AppError('invalid_source', '来源信息无效，请重新查询。');
-  const url = announcementUrl(source.url, source.courseId);
+  const url = source.kind === 'assignment' ? assignmentReadUrl(source.url, source.courseId) : announcementUrl(source.url, source.courseId);
+  if (source.kind === 'assignment' && url.pathname !== CONTENT_PATH) throw new AppError('unsafe_url', '作业出处只能打开内容列表。');
   if (source.anchorId) {
     if (!/^_\d+_\d+$/.test(source.anchorId)) throw new AppError('invalid_source', '公告定位信息无效。');
     url.hash = source.anchorId;
@@ -181,6 +206,11 @@ async function handleMessage(raw: unknown): Promise<unknown> {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请重新读取课程列表。');
       const tabId = await blackboardTab();
       return collect(tabId, await currentCourse(tabId, message.course));
+    }
+    case 'collect_assignments': {
+      if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
+      const tabId = await blackboardTab();
+      return collectAssignments(tabId, await currentCourse(tabId, message.course));
     }
     case 'open_source': return openSource(message.source, message.quote);
     default: throw new AppError('invalid_message', '该操作不属于侧栏支持的只读查询。');

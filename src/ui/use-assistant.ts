@@ -1,8 +1,9 @@
-/** 文件用途：协调课程发现、按需公告刷新和有出处的模型回答；凭据只在侧栏调用模型时使用。 */
+/** 文件用途：协调课程发现、公告问答和作业截止直读；凭据只在侧栏调用模型时使用。 */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { defaultCourse, resolveCourse } from '../blackboard/course-resolution';
 import { askDeepSeek } from '../ai/deepseek';
-import { collectAnnouncements, discoverCourses } from '../shared/browser-client';
+import { collectAnnouncements, collectAssignments, discoverCourses } from '../shared/browser-client';
+import { isAssignmentDeadlineQuestion, answerAssignmentDeadlines } from '../blackboard/deadlines';
 import { friendlyError } from '../shared/errors';
 import { loadSettings, saveSettings } from '../shared/settings';
 import type { AnnouncementSnapshot, Course, CourseDiscovery, ModelAnswer, Settings } from '../shared/types';
@@ -14,6 +15,7 @@ export interface Turn {
   snapshot?: AnnouncementSnapshot;
   answer?: ModelAnswer;
   error?: string;
+  progress?: string;
   stage: 'reading' | 'answering' | 'done' | 'error' | 'cancelled';
 }
 const initialSettings: Settings = { apiKey: '', model: 'deepseek-flash', theme: 'system' };
@@ -82,7 +84,7 @@ export function useAssistant() {
     setTurns(/** 按稳定会话 ID 合并异步阶段，避免替换其他问题。 */ function merge(previous) { return previous.map(/** 仅更新目标条目。 */ function change(turn) { return turn.id === id ? { ...turn, ...changes } : turn; }); });
   }
 
-  /** 运行一轮问答；默认实时刷新公告，模型重试则复用明确显示检索时间的证据。 */
+  /** 运行一轮问答；默认实时刷新对应资料，模型重试则复用明确显示检索时间的证据。 */
   async function run(question: string, course: Course, previousSnapshot?: AnnouncementSnapshot, retryId?: number) {
     if (running.current) return;
     running.current = true;
@@ -91,14 +93,18 @@ export function useAssistant() {
     const abort = new AbortController(); controller.current = abort;
     if (course.courseId !== selectedId) manuallySelected.current = false;
     setBusy(true); setNotice(''); setSelectedId(course.courseId);
-    if (retryId) updateTurn(id, { error: undefined, answer: undefined, stage: previousSnapshot ? 'answering' : 'reading' });
+    if (retryId) updateTurn(id, { error: undefined, answer: undefined, progress: undefined, stage: previousSnapshot ? 'answering' : 'reading' });
     else setTurns(/** 添加问题到本侧栏会话，不持久化问题内容。 */ function append(previous) { return [...previous, { id, question, course, stage: 'reading' }]; });
     let snapshot = previousSnapshot;
     try {
-      if (!snapshot) snapshot = await collectAnnouncements(course);
+      const deadlineQuestion = isAssignmentDeadlineQuestion(question);
+      if (!snapshot) snapshot = await (deadlineQuestion ? collectAssignments(course) : collectAnnouncements(course));
       if (token !== sequence.current) return;
       updateTurn(id, { snapshot, stage: 'answering' }); setConnectionError('');
-      const answer = await askDeepSeek({ question, snapshot, apiKey: settings.apiKey, model: settings.model, signal: abort.signal });
+      const answer = deadlineQuestion ? answerAssignmentDeadlines(question, snapshot) : await askDeepSeek({ question, snapshot, apiKey: settings.apiKey, model: settings.model, signal: abort.signal,
+        /** 只更新仍有效的同一轮状态，取消后忽略迟到提示。 */
+        onProgress(progress) { if (token === sequence.current) updateTurn(id, { progress: progress.state === 'retrying' ? '连接暂时不稳定，正在自动重试（2/2）…' : progress.state === 'waiting' ? `模型仍在响应中（${progress.attempt}/2），无需手动重试，可随时停止。` : progress.attempt > 1 ? '正在重新连接模型（2/2）…' : undefined }); },
+      });
       if (token !== sequence.current) return;
       updateTurn(id, { answer, stage: 'done' });
     } catch (error) {
@@ -111,7 +117,7 @@ export function useAssistant() {
   function ask(question: string): boolean {
     const text = question.trim();
     if (running.current || !text) return false;
-    if (!settings.apiKey) { setNotice('请先在设置中添加 DeepSeek API 密钥。'); return false; }
+    if (!settings.apiKey && !isAssignmentDeadlineQuestion(text)) { setNotice('请先在设置中添加 DeepSeek API 密钥。'); return false; }
     if (!discovery) { setNotice(extensionAvailable ? '请先连接 Blackboard 并读取课程。' : '请在 Edge 或 Chrome 加载扩展后使用。'); return false; }
     try { const course = resolveCourse(text, discovery, selectedId, manuallySelected.current); void run(text, course); return true; }
     catch (error) { setNotice(error instanceof Error ? error.message : '请先选择课程。'); return false; }
@@ -124,7 +130,7 @@ export function useAssistant() {
   }
 
   /** 重试已有问题；采集成功时只重新请求模型，避免丢弃现成的原文。 */
-  function retry(turn: Turn) { if (running.current) return; if (!settings.apiKey) { setNotice('请先在设置中添加 DeepSeek API 密钥，再重试。'); return; } void run(turn.question, turn.course, turn.snapshot, turn.id); }
+  function retry(turn: Turn) { if (running.current) return; if (!settings.apiKey && !isAssignmentDeadlineQuestion(turn.question)) { setNotice('请先在设置中添加 DeepSeek API 密钥，再重试。'); return; } void run(turn.question, turn.course, turn.snapshot, turn.id); }
 
   return { settings, updateSettings, discovery, selectedId, selectCourse, discovering, refreshCourses, connectionError, notice, turns, busy, ask, cancel, retry, extensionAvailable };
 }

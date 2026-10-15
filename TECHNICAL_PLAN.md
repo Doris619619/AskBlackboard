@@ -1,5 +1,5 @@
-<!-- 文件用途：记录已实施的公告问答首版架构、接口、限制和后续路线。 -->
-# Blackboard 公告问答技术方案
+<!-- 文件用途：记录已实施的公告问答、作业截止直读架构、接口、限制和后续路线。 -->
+# Blackboard 课程查询技术方案
 
 实施日期：2026 年 10 月 8 日。个人版目标：在侧栏问 GED2005 的 Quiz 日期，按最新可见公告回答，并提供原文及回跳路径。仓库 `D:\Repo\bb`，远端 `Doris619619/AskBlackboard`，分支 `feat/20261007-bb-quiz-assistant`。
 
@@ -20,7 +20,7 @@ flowchart LR
   R --> P[打开原文、滚动及高亮]
 ```
 
-学校登录使用正常浏览器流程，Cookie 不离开浏览器。后台协调标签页，内容脚本仅接受本扩展内部消息。读取仅限学校同源门户和公告 GET，拒绝作答、提交、编辑和跨站地址。
+学校登录使用正常浏览器流程，Cookie 不离开浏览器。后台协调标签页，内容脚本仅接受本扩展内部消息。读取仅限学校同源门户、公告、课程入口及内容列表 GET，拒绝作答、提交、编辑、附件和跨站地址。
 
 ## 课程与公告
 
@@ -34,7 +34,7 @@ flowchart LR
 
 ## 模型与证据
 
-固定接口 https://api.deepseek.com/chat/completions，默认 deepseek-flash，thinking.type=disabled，stream=false，response_format.type=json_object，max_tokens=1024，60 秒超时。密钥在 chrome.storage.local 的 TRUSTED_CONTEXTS 中，内容脚本不能读取，不经 runtime 消息传递。
+固定接口 https://api.deepseek.com/chat/completions，默认 deepseek-flash，thinking.type=disabled，stream=false，response_format.type=json_object，max_tokens=1024。首轮60秒，临时超时、网络错误、429或5xx自动重试一次90秒；退避1.5秒，Retry-After最多10秒，总模型等待上限约160秒。15秒显示慢请求进度。取消会中断请求或退避，不发后续请求。鉴权、余额、格式和依据校验失败不自动重试。密钥在 chrome.storage.local 的 TRUSTED_CONTEXTS 中，内容脚本不能读取，不经 runtime 消息传递。
 
 模型输出 {status, answer, citations}。status 为 found、not_found、conflict，引用为 {sourceId, quote}。程序验证 JSON、选定课程来源、原文连续摘录和可识别的日期、星期、钟点与时长；分别绑定测验编号与教学班，区分明确改期与冲突。无效输出报错并保留公告，模型不生成可点击链接。
 
@@ -43,6 +43,14 @@ flowchart LR
 日期校验覆盖已测试格式，并非所有自然语言的完整逻辑证明。复杂表述仍依赖模型说明不确定；被拒绝时可直接查看来源。只读公告不代表查遍课程资料。
 
 出处由课程公告 URL 和真实条目锚点生成，后台打开后内容脚本滚动并高亮。不读取公告中指向测验作答或作业提交的链接。
+
+## 作业截止直读
+
+`deadlines.ts` 识别“作业/assignment/homework + 截止/due/when”等意图，沿用同一课程消歧规则；通过 `collect_assignments` → `read_assignments` 获取快照，不要求密钥也不调用模型。其他问题仍走公告 AI 路径。
+
+`assignment-policy.ts` 只允许同课程的 courseMain、modulepage/view 和 content/listContent.jsp 及严格参数。`assignments.ts` 从课程导航和列表标题发现文件夹，最多40页、约60秒遍历预算，单次同源请求15秒；后续失败标记 partial。支持同源请求和专用渲染标签页两条路线。提交链接只用来识别作业类型，绝不加入读取队列。仅读取 `.vtbegenerated` 和 Due Date 等标签字段；附件、测验和表单值不读取。
+
+快照新增可选 `scope: assignments`；来源新增 `kind: assignment`，sourceId带assignment前缀，URL始终为所在内容列表。回答 `mode: extracted`，直接引用带截止含义的原文，不转换相对日期或猜测时区。指定作业编号时不借其他作业日期；多项无可靠发布时间时不认定“最新”。缺字段、超过范围或失败明确说明，不能代表课程不存在作业。出处打开列表并高亮真实条目。
 
 ## 界面与恢复
 

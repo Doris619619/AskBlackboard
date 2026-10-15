@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "AskBlackboard",
   "version": "0.1.0",
-  "description": "查询港中深 Blackboard 课程公告，获得 AI 回答与可定位的原文依据。",
+  "description": "查询 Blackboard 课程公告和作业截止时间，提供可定位的原文依据。",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "sidePanel"],
   "host_permissions": ["https://bb.cuhk.edu.cn/*", "https://api.deepseek.com/*"],

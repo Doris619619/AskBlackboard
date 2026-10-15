@@ -16,6 +16,7 @@ export interface CourseDiscovery {
 }
 
 export interface SourceEvidence {
+  kind?: 'announcement' | 'assignment';
   sourceId: string;
   courseId: string;
   title: string;
@@ -28,6 +29,7 @@ export interface SourceEvidence {
 }
 
 export interface AnnouncementSnapshot {
+  scope?: 'announcements' | 'assignments';
   course: Course;
   sources: SourceEvidence[];
   fetchedAt: string;
@@ -36,6 +38,7 @@ export interface AnnouncementSnapshot {
 
 export interface Citation { sourceId: string; quote: string }
 export interface ModelAnswer {
+  mode?: 'ai' | 'extracted';
   status: 'found' | 'not_found' | 'conflict';
   answer: string;
   citations: Citation[];
@@ -46,6 +49,8 @@ export interface Settings { apiKey: string; model: string; theme: 'system' | 'li
 export type ExtensionMessage =
   | { type: 'discover_courses' }
   | { type: 'collect_announcements'; course: Course }
+  | { type: 'collect_assignments'; course: Course }
+  | { type: 'read_assignments'; course: Course }
   | { type: 'open_source'; source: SourceEvidence; quote?: string }
   | { type: 'ping' }
   | { type: 'read_discovery' }

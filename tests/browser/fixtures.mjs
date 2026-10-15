@@ -18,3 +18,8 @@ export const gebFound = { status: 'found', answer: 'GEB2509 的项目展示在20
 
 /** 包装确定性模型回复，只验证扩展传输、校验和展示链路，不代表真实模型质量。 */
 export function completion(answer) { return { choices: [{ finish_reason: 'stop', message: { content: JSON.stringify(answer) } }] }; }
+
+/** 构建虚构课程入口，课程列表链接是唯一可遍历的后续地址。 */
+export function assignmentRoot(courseId) { return `<ul id="courseMenuPalette_contents"><li><a href="/webapps/blackboard/content/listContent.jsp?course_id=${courseId}&content_id=_900_1">Assignments</a></li></ul>`; }
+/** 作业提交链接仅用于辨认类型，浏览器验收会断言该地址从未被访问。 */
+export function assignmentListing(courseId) { return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${courseId}">Example</a></div><h1 id="pageTitleHeader">Assignments</h1><ul id="content_listContainer"><li id="contentListItem:_910_1"><img class="item_icon" alt="Assignment"><div class="item" id="_910_1"><h3><a href="/webapps/assignment/uploadAssignment?course_id=${courseId}&content_id=_910_1">Assignment1</a></h3></div><div class="vtbegenerated"><p>The deadline is 21:30, 22 Nov 2026.</p></div></li></ul>`; }
