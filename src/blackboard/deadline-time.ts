@@ -4,8 +4,9 @@ const monthWord = '(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e
 
 /** 仅格式化无歧义单日期和单钟点；多日期/条件/否定回退原话，避免抹掉约束。 */
 export function conciseDeadline(quote: string): string {
-  const text = quote.split(/[（(]/)[0];
-  if (/\bnot\b|cancel|postpon|extend|改期|延期|取消|不再|不是|暂未|尚未|before|after|之前|之后|earlier|later|\bfrom\b|\bbetween\b|\buntil\b/i.test(text)) return '时间条件见原话';
+  // 括号同样可能包含时区、延期或适用条件，必须一起核对，不能只截取主句。
+  const text = quote;
+  if (/\bnot\b|\bif\b|\bunless\b|\botherwise\b|\bexcept\b|cancel|postpon|extend|改期|延期|取消|不再|不是|暂未|尚未|如果|若|除非|before|after|之前|之后|earlier|later|\bfrom\b|\bbetween\b|\buntil\b/i.test(text)) return '时间条件见原话';
   const dates: { year?: string; month: number; day: number }[] = [];
   for (const m of text.matchAll(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${monthWord}(?:[ ,]+(20\\d{2}))?\\b`, 'gi'))) dates.push({ day: Number(m[1]), month: months.indexOf(m[2].slice(0,3).toLowerCase()) + 1, year: m[3] });
   for (const m of text.matchAll(new RegExp(`\\b${monthWord}\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(20\\d{2}))?\\b`, 'gi'))) dates.push({ month: months.indexOf(m[1].slice(0,3).toLowerCase()) + 1, day: Number(m[2]), year: m[3] });

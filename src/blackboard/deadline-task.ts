@@ -2,6 +2,14 @@
 export interface DeadlineTask { kind: string; number?: string }
 const taskPattern = /(assignment|homework|hw|作业|reports?|实验报告|报告|projects?|项目|codes?|代码|labs?|实验)\s*(?:no\.?\s*|#\s*|[-_：:]\s*)?(\d+)(?!\d)/giu;
 
+/** 识别独立的无编号报告/代码小标题，供调用者切断上一任务的截止上下文；不将正文提及当标题。 */
+export function taskHeadingKind(text: string): string | undefined {
+  const heading = text.replace(/^[\s#*•-]+|[\s:：*]+$/gu, '');
+  if (/^(?:(?:lab|laboratory)\s+)?reports?$|^(?:实验)?报告$/iu.test(heading)) return 'report';
+  if (/^(?:source\s+)?codes?$|^(?:源)?代码$/iu.test(heading)) return 'code';
+  return undefined;
+}
+
 /** 提取明确编号，不把课程号、班组号或日期当成作业编号。 */
 export function taskReferences(text: string): DeadlineTask[] {
   return [...text.matchAll(taskPattern)].map(/** 将常见中英文名称归到相同任务类型。 */ function normalize(match) {

@@ -39,6 +39,18 @@ describe('report deadline queries', () => {
     expect(conciseDeadline('Due: 21:30, 17 Nov 2026 (5 minute grace period)')).toBe('2026年11月17日 21:30');
     expect(conciseDeadline('Due: November 17')).toBe('11月17日（未注明具体时刻）');
   });
+  it('does not carry report context into an unnumbered code heading, or vice versa', () => {
+    const report = answerAssignmentDeadlines('report1 ddl', snapshot([source('Report 1 and Code', 'Report\nDue November 17, 2026\nSource Code:\nDue November 19, 2026')]));
+    expect(report.citations.map(c => c.quote)).toEqual(['Due November 17, 2026']);
+    const code = answerAssignmentDeadlines('code1 ddl', snapshot([source('Code 1 and Report', 'Code\nDue November 17, 2026\n报告：\nDue November 19, 2026')]));
+    expect(code.citations.map(c => c.quote)).toEqual(['Due November 17, 2026']);
+  });
+  it('preserves parenthesized zones and does not hide conditions or alternate dates', () => {
+    expect(conciseDeadline('Due November 17, 2026 19:00 (UTC+8)')).toBe('2026年11月17日 19:00 UTC+8');
+    expect(conciseDeadline('Due November 17, 2026 19:00 (if approved)')).toBe('时间条件见原话');
+    expect(conciseDeadline('Due November 17, 2026 (otherwise November 19, 2026)')).not.toContain('2026年11月17日');
+    expect(conciseDeadline('Due November 17, 2026 (延期至 November 19, 2026)')).toBe('时间条件见原话');
+  });
   it('merges both scopes and makes one-route failure visible while retaining evidence', async () => {
     const merged = await collectDeadlineSources(course, [async () => snapshot(), async () => snapshot([])]);
     expect(merged.scope).toBe('deadlines'); expect(merged.sources).toHaveLength(1); expect(merged.coverage.pagesRead).toBe(2);

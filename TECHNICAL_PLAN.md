@@ -56,6 +56,8 @@ flowchart LR
 
 回答新增deadlines和notices字段，DeadlineAnswer组件按“班组/时间/原话/来源按钮”呈现。截止摘录与来源绑定，读取范围放入全部资料折叠区；不完整和候选提示仍可见。AI时间问题提示词要求简短回答，引用默认展开。窗口级sidePanel仍沿用现有行为，不扩大学校内容脚本注入或网络读取权限。
 
+PR审查补充：`taskHeadingKind` 识别独立且无编号的 Report/Source Code/报告/代码小标题，遇到不同类型时清除继承的任务范围，防止后续独立 Due 行串到前一任务。日期格式化核对完整原句（含括号），保留括号时区；if/unless/otherwise 等条件与延期、多日期均回退原话，不能仅截主句制造确定答案。
+
 ## 界面与恢复
 
 侧栏每次后台请求前发送ping校验 `runtime-version.ts` 的消息协议号。旧版返回true或协议不匹配时，在学校采集前返回 `extension_reload_required`；受限操作收到invalid_message时同样提示重新加载。界面提供用户主动触发的 `chrome.runtime.reload()` 按钮，明确说明侧栏会关闭、设置保留。仅刷新学校页面不会替换旧worker；不自动重载以免丢失当前会话。升级回归模拟旧协议worker，替换为真实新构建后点击按钮，验证worker重启、受信存储保留及作业查询恢复。

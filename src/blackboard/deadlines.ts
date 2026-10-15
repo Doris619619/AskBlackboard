@@ -1,6 +1,6 @@
 /** 文件用途：联合公告与作业证据，按任务和班组显示简短截止时间及原话，不依赖模型。 */
 import type { AnnouncementSnapshot, ModelAnswer, SourceEvidence } from '../shared/types';
-import { matchTask, requestedTask, taskReferences } from './deadline-task';
+import { matchTask, requestedTask, taskHeadingKind, taskReferences } from './deadline-task';
 import { conciseDeadline } from './deadline-time';
 
 /** 支持口语中英混写的报告、实验、项目和作业截止问题。 */
@@ -28,6 +28,8 @@ export function answerAssignmentDeadlines(question: string, snapshot: Announceme
       const refs = taskReferences(line);
       const lineMatch = matchTask(line, task);
       if (refs.length) active = lineMatch || (active && refs.every(/** 无截止信息的同实验报告/代码清单不抹掉当前实验范围。 */ function sameLab(ref) { return ref.kind === 'lab' && ref.number === task.number; }) ? active : undefined);
+      const headingKind = taskHeadingKind(line);
+      if (headingKind && headingKind !== task.kind) active = undefined;
       const lineSections = [...line.matchAll(/\bL0?([1-9])\b/gi)];
       if (lineSections.length === 1) section = lineSections[0][1];
       if (selectedSection && section && selectedSection !== section) continue;
