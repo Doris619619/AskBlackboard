@@ -1,5 +1,6 @@
 /** 文件用途：协调 Blackboard 标签页、受限只读采集、专用 DOM 备用标签页与来源回跳。 */
 import { AppError, friendlyError } from '../shared/errors';
+import { RUNTIME_PROTOCOL } from '../shared/runtime-version';
 import type { AnnouncementSnapshot, Course, CourseDiscovery, ExtensionMessage, RuntimeResult, SourceEvidence } from '../shared/types';
 import { MAX_ANNOUNCEMENT_PAGES } from '../blackboard/collector';
 import type { ParsedAnnouncementPage } from '../blackboard/announcements';
@@ -200,7 +201,7 @@ async function handleMessage(raw: unknown): Promise<unknown> {
   if (!raw || typeof raw !== 'object' || typeof (raw as { type?: unknown }).type !== 'string') throw new AppError('invalid_message', '扩展请求无效，请重新打开侧栏。');
   const message = raw as ExtensionMessage;
   switch (message.type) {
-    case 'ping': return true;
+    case 'ping': return { protocol: RUNTIME_PROTOCOL };
     case 'discover_courses': return discover(await blackboardTab());
     case 'collect_announcements': {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请重新读取课程列表。');

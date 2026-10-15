@@ -4,7 +4,7 @@ import { defaultCourse, resolveCourse } from '../blackboard/course-resolution';
 import { askDeepSeek } from '../ai/deepseek';
 import { collectAnnouncements, collectAssignments, discoverCourses } from '../shared/browser-client';
 import { isAssignmentDeadlineQuestion, answerAssignmentDeadlines } from '../blackboard/deadlines';
-import { friendlyError } from '../shared/errors';
+import { AppError, friendlyError } from '../shared/errors';
 import { loadSettings, saveSettings } from '../shared/settings';
 import type { AnnouncementSnapshot, Course, CourseDiscovery, ModelAnswer, Settings } from '../shared/types';
 
@@ -27,6 +27,7 @@ export function useAssistant() {
   const [selectedId, setSelectedId] = useState('');
   const [discovering, setDiscovering] = useState(false);
   const [connectionError, setConnectionError] = useState('');
+  const [needsReload, setNeedsReload] = useState(false);
   const [notice, setNotice] = useState('');
   const [turns, setTurns] = useState<Turn[]>([]);
   const [busy, setBusy] = useState(false);
@@ -55,9 +56,9 @@ export function useAssistant() {
       }
       const found = await discoveryRequest.current;
       if (!mounted.current || token !== discoverySequence.current) return;
-      setDiscovery(found);
+      setDiscovery(found); setNeedsReload(false);
       setSelectedId(/** 保留仍有效的明确选择；新学期回退默认值时取消之前班组选择的标记。 */ function preserveSelection(previous) { if (found.courses.some(/** 检查之前课程是否仍可见。 */ function hasPrevious(course) { return course.courseId === previous; })) return previous; manuallySelected.current = false; return defaultCourse(found); });
-    } catch (error) { if (mounted.current && token === discoverySequence.current) setConnectionError(friendlyError(error)); }
+    } catch (error) { if (mounted.current && token === discoverySequence.current) { setConnectionError(friendlyError(error)); setNeedsReload(error instanceof AppError && error.code === 'extension_reload_required'); } }
     finally { if (mounted.current && token === discoverySequence.current) setDiscovering(false); }
   }, [extensionAvailable]);
 
@@ -109,6 +110,7 @@ export function useAssistant() {
       updateTurn(id, { answer, stage: 'done' });
     } catch (error) {
       if (token !== sequence.current) return;
+      if (error instanceof AppError && error.code === 'extension_reload_required') { setNeedsReload(true); setConnectionError(friendlyError(error)); }
       updateTurn(id, { error: friendlyError(error), snapshot, stage: 'error' });
     } finally { if (token === sequence.current) { running.current = false; setBusy(false); controller.current = null; } }
   }
@@ -132,5 +134,5 @@ export function useAssistant() {
   /** 重试已有问题；采集成功时只重新请求模型，避免丢弃现成的原文。 */
   function retry(turn: Turn) { if (running.current) return; if (!settings.apiKey && !isAssignmentDeadlineQuestion(turn.question)) { setNotice('请先在设置中添加 DeepSeek API 密钥，再重试。'); return; } void run(turn.question, turn.course, turn.snapshot, turn.id); }
 
-  return { settings, updateSettings, discovery, selectedId, selectCourse, discovering, refreshCourses, connectionError, notice, turns, busy, ask, cancel, retry, extensionAvailable };
+  return { settings, updateSettings, discovery, selectedId, selectCourse, discovering, refreshCourses, connectionError, needsReload, notice, turns, busy, ask, cancel, retry, extensionAvailable };
 }

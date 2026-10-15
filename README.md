@@ -50,6 +50,8 @@ npm run package
 
 `npm run dev` 提供空状态界面预览，不连接学校、不存密钥、不生成示例答案。实际功能需加载扩展。改源码后重新构建，在扩展管理页重新加载并刷新学校页面。
 
+本地构建后，侧栏可能已经读取新文件，但Edge仍运行旧后台。侧栏刷新课程按钮、刷新学校网页、关闭再打开侧栏，都不等于重新加载扩展。请在 `edge://extensions` 的 AskBlackboard 卡片点击“重新加载”，再刷新学校页面、重新打开侧栏。密钥保留。新版会检查后台协议，不一致时明确提示并提供“重新加载插件”按钮；按钮会关闭侧栏，需要重新打开。
+
 浏览器回归会加载实际扩展，但学校和模型响应使用虚构数据，不能代替真实账号验收：
 
 ```powershell
@@ -59,6 +61,8 @@ npm run test:browser
 $env:BB_BROWSER_EXECUTABLE = 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'
 npm run test:browser
 ```
+
+`node scripts/runtime-upgrade-smoke.mjs` 使用隔离配置模拟旧后台配新界面，再点击真正的扩展重新加载按钮，验证配置保留及作业查询恢复；学校与模型依然使用虚构网络。
 
 测试使用独立 `.local/browser-smoke-*` 配置，不继承日常浏览器凭据；启用离线网络并由测试路由返回虚构资料。报告和截图位于 `artifacts/browser-smoke/`。学校、真实模型和真正侧栏的最新验收结果见 [验收记录](docs/验收记录.md#2026-10-14-edge-真实验收)。
 

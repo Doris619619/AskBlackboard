@@ -7,6 +7,7 @@ import { Sources } from './sources';
 import { useAssistant } from './use-assistant';
 import type { Turn } from './use-assistant';
 import { isAssignmentDeadlineQuestion } from '../blackboard/deadlines';
+import { reloadExtension } from '../shared/browser-client';
 
 /** 展示单次问题的进行状态或有出处回答；模型失败时依然提供已经读取的资料。 */
 function ConversationTurn({ turn, busy, onRetry }: { turn: Turn; busy: boolean; onRetry: (turn: Turn) => void }) {
@@ -74,6 +75,7 @@ export function App() {
       <div className="course-controls"><label className="sr-only" htmlFor="course-select">选择课程和教学班</label><div className="course-picker"><select id="course-select" value={assistant.selectedId} disabled={assistant.discovering || assistant.busy || !assistant.discovery} onChange={/** 选择课程同时明确歧义课程的班组。 */ function changeCourse(event) { assistant.selectCourse(event.target.value); }}><option value="">{assistant.discovering ? '正在读取课程…' : assistant.discovery ? '选择一门课程' : '等待连接课程'}</option>{assistant.discovery?.courses.map(/** 每项包含学期与班组，避免同编号课程难以区分。 */ function renderCourse(course) { return <option key={course.courseId} value={course.courseId}>{course.code}{course.section ? ` · ${course.section}` : ''}{course.termLabel ? ` · ${course.termLabel}` : ''}</option>; })}</select><Icon name="chevron" /></div><button type="button" className="icon-button refresh-courses" aria-label="刷新课程" title="刷新课程" disabled={assistant.discovering || assistant.busy || !assistant.extensionAvailable} onClick={assistant.refreshCourses}><Icon name="refresh" /></button></div>
       <div className="connection-line"><span className={`connection-dot ${assistant.discovery && !assistant.connectionError ? 'connected' : ''}`} /><span>{assistant.discovering ? '正在连接 Blackboard' : assistant.connectionError ? '连接需要恢复' : assistant.discovery ? '已连接 Blackboard' : assistant.extensionAvailable ? '请登录 Blackboard' : '在浏览器扩展中使用'}</span><span className="term-label">公告与作业</span></div>
       {assistant.connectionError && <p className="context-error" role="alert">{assistant.connectionError}</p>}
+      {assistant.needsReload && <div><button type="button" className="text-button" onClick={reloadExtension}><Icon name="refresh" /><span>重新加载插件</span></button><p className="composer-caption">会关闭侧栏，请重新打开；已保存的密钥会保留。</p></div>}
     </section>
     <main className="workspace" aria-label="课程问答">
       {!hasTurns && <div className="empty-state"><span className="empty-book"><Icon name="book" width="24" height="24" /></span><h2>课程里的事，直接问。</h2><p>写上课程号或简称，<br />查课程公告和作业截止。</p><div className="example-list">{['GEB 的 presentation 是什么时候？', 'ECE4016 最新的作业什么时候截止？'].map(/** 示例只填入草稿，用户确认后才读取公告。 */ function renderExample(question) { return <button key={question} type="button" className="example-question" onClick={/** 将对应示例放入草稿并聚焦输入。 */ function fillExample() { useExample(question); }}><span>{question}</span><Icon name="arrow" /></button>; })}</div>{!assistant.settings.apiKey && <button type="button" className="text-button setup-link" onClick={/** 首次使用提供直达密钥设置的入口。 */ function setupConnection() { setSettingsOpen(true); }}>设置 DeepSeek 连接</button>}</div>}
