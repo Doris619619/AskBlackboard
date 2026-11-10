@@ -1,7 +1,7 @@
 /** 文件用途：将课件目录与同源 WebDAV 文件限定在独立的只读地址范围。 */
 import { AppError } from '../shared/errors';
 import { assignmentEntry, assignmentReadUrl, CONTENT_PATH } from './assignment-policy';
-import { BLACKBOARD_ORIGIN, schoolUrl } from './policy';
+import { ANNOUNCEMENT_PATH, BLACKBOARD_ORIGIN, schoolUrl } from './policy';
 
 const fileSuffix = /\.(?:pdf|pptx?|docx?|xlsx?|txt|csv|rtf|odt|ods|odp|zip|rar|7z|png|jpe?g|gif)$/i;
 const webDavId = /^xid-\d+_\d+$/i;
@@ -12,9 +12,21 @@ export const COURSEWARE_REDIRECT_MESSAGE = '无法确认课件目录的跳转目
 /** 判断可保存的课件格式；目录页没有文件名的 XID 链接还需由响应确认格式。 */
 export function isCoursewareFilename(name: string): boolean { return fileSuffix.test(name.trim()); }
 
+/** 构建固定的同课程公告入口，课件读取只使用其教师菜单。 */
+export function coursewareMenuUrl(courseId: string): URL {
+  if (!/^_\d+_\d+$/.test(courseId)) throw new AppError('course_mismatch', '课件页面与所选课程不一致。');
+  const url = new URL(ANNOUNCEMENT_PATH, BLACKBOARD_ORIGIN);
+  url.search = new URLSearchParams({ method: 'search', context: 'course_entry', course_id: courseId, handle: 'announcements_entry', mode: 'view' }).toString();
+  return url;
+}
+
 /** 验证请求页面。课程根可进入该课程的只读首页，子目录跳转必须保留原目录标识。 */
 export function coursewarePageUrl(courseId: string, folderUrl?: string, pageUrl?: string): URL {
   const initial = folderUrl === undefined ? new URL(assignmentEntry(courseId)) : assignmentReadUrl(folderUrl, courseId);
+  if (folderUrl === undefined && pageUrl !== undefined) {
+    const menu = coursewareMenuUrl(courseId);
+    if (pageUrl === menu.href) return menu;
+  }
   const target = pageUrl === undefined ? initial : assignmentReadUrl(pageUrl, courseId, initial.href);
   if (folderUrl !== undefined && (initial.pathname !== CONTENT_PATH || target.pathname !== CONTENT_PATH || target.searchParams.get('content_id') !== initial.searchParams.get('content_id'))) {
     throw new AppError('unsafe_url', '只能读取当前课程的所选课件目录。');

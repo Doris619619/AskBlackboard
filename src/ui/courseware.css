@@ -99,6 +99,19 @@
 .courseware-results summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; color: var(--secondary); font-size: var(--type-subhead); }
 .courseware-results[open] svg { transform: rotate(90deg); }
 .courseware-results li, .courseware-handoff-list li { padding: 6px 0; border-top: 1px solid var(--separator); font-size: var(--type-subhead); line-height: 1.6; }
+.courseware-diagnostic pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--type-caption);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.courseware-diagnostic pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.courseware-diagnostic .text-button, .courseware-diagnostic-status { font-size: var(--type-subhead); }
+.courseware-diagnostic-status { color: var(--secondary); }
 .courseware-handoff-list { margin: 12px 0; }
 @media (max-height: 600px), (max-width: 260px) {
   .courseware-shell { flex: 0 0 auto; }

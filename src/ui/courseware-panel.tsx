@@ -77,11 +77,52 @@ export function CoursewarePanel({ hidden, discovery, discovering, connectionErro
   </section>;
 }
 
+/** 仅展示本轮失败附带的诊断文本，并在用户点击时写入剪贴板。 */
+function CoursewareDiagnostic({ diagnostic }: { diagnostic: string }) {
+  const log = useRef<HTMLPreElement>(null);
+  const [copyStatus, setCopyStatus] = useState('');
+
+  /** 剪贴板不可用时选中日志，便于通过键盘手动复制。 */
+  async function copyDiagnostic(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(diagnostic);
+      setCopyStatus('已复制诊断日志');
+    } catch {
+      const selection = window.getSelection();
+      const element = log.current;
+      if (!selection || !element) {
+        setCopyStatus('复制失败，请手动选择并复制日志。');
+        return;
+      }
+      element.focus();
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      setCopyStatus('已选中诊断日志，请手动复制。');
+    }
+  }
+
+  return <details className="courseware-results courseware-diagnostic">
+    <summary>诊断详情<Icon name="chevron" /></summary>
+    <pre ref={log} tabIndex={-1}>{diagnostic}</pre>
+    <button type="button" className="text-button" onClick={copyDiagnostic}>复制诊断日志</button>
+    <p className="courseware-diagnostic-status" role="status">{copyStatus}</p>
+  </details>;
+}
+
 /** 在教师栏目内逐层读取目录，管理同一课程的勾选和保存结果。 */
 function CoursewareCourse({ course, returnToCourses }: { course: Course; returnToCourses: () => void }) {
   const [folders, setFolders] = useState<CoursewareFolder[]>([]);
   const [selection, setSelection] = useState<Map<string, CoursewareSelection>>(new Map());
-  const [page, setPage] = useState<{ folder?: CoursewareFolder; attempt: number; listing?: CoursewareListing; error?: string; needsReload?: boolean }>();
+  const [page, setPage] = useState<{
+    folder?: CoursewareFolder;
+    attempt: number;
+    listing?: CoursewareListing;
+    error?: string;
+    diagnostic?: string;
+    needsReload?: boolean;
+  }>();
   const [attempt, setAttempt] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const selectAll = useRef<HTMLInputElement>(null);
@@ -103,7 +144,13 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
         const listing = await collectCourseware(course, folder);
         if (current) setPage({ folder, attempt, listing });
       } catch (error) {
-        if (current) setPage({ folder, attempt, error: friendlyError(error), needsReload: error instanceof AppError && error.code === 'extension_reload_required' });
+        if (current) setPage({
+          folder,
+          attempt,
+          error: friendlyError(error),
+          diagnostic: error instanceof AppError ? error.diagnostic : undefined,
+          needsReload: error instanceof AppError && error.code === 'extension_reload_required',
+        });
       }
     }
     void load();
@@ -157,6 +204,7 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
       {visiblePage?.error && <div>
         <p role="alert" className="inline-error">{visiblePage.error}</p>
         <button type="button" className="text-button" disabled={busy} onClick={visiblePage.needsReload ? reloadExtension : retryListing}>{visiblePage.needsReload ? '重新加载插件' : '重试读取'}</button>
+        {visiblePage.diagnostic && <CoursewareDiagnostic diagnostic={visiblePage.diagnostic} />}
       </div>}
       {visiblePage?.listing && !entries.length && <p className="muted">{folder ? '当前目录没有可下载的课件。' : '这门课程没有可浏览的课件栏目。'}</p>}
       {files.length > 0 && <label className="courseware-file courseware-select-all">

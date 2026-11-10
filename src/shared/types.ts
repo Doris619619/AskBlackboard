@@ -61,4 +61,4 @@ export type ExtensionMessage =
   | { type: 'read_announcements'; course: Course }
   | { type: 'highlight_source'; sourceId: string; quote?: string };
 
-export type RuntimeResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string } };
+export type RuntimeResult<T> = { ok: true; data: T } | { ok: false; error: { code: string; message: string; diagnostic?: string } };

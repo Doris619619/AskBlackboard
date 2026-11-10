@@ -4,7 +4,12 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl, assignmentRoot, assignmentListing } from '../tests/browser/fixtures.mjs';
-import { coursewarePortal, reportAnnouncements, coursewarePage, coursewareCourseId, coursewareLanding, forbiddenCoursewareLanding, historicalCoursewareCourseId, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes } from '../tests/browser/fixtures.mjs';
+import {
+  coursewarePortal, reportAnnouncements, coursewarePage, coursewareCourseId, coursewareLanding,
+  forbiddenCoursewareLanding, historicalCoursewareCourseId, historicalCoursewareAlternate,
+  alternateCoursewareCourseId, alternateCoursewareLanding, unsupportedCoursewareLanding,
+  unsupportedCoursewareLandingPath, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes,
+} from '../tests/browser/fixtures.mjs';
 import { runCoursewareSmoke } from './browser-courseware-smoke.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
@@ -28,6 +33,11 @@ let modelCalls = 0;
 let unsafeRequests = 0;
 let assignmentReads = 0;
 const coursewareState = { files: [], entries: [], unsafeRedirectRequested: false, failDirectory: true, failTutorial: true, loginExpired: false };
+const coursewareRedirects = new Map([
+  [coursewareCourseId, coursewareLanding],
+  [historicalCoursewareCourseId, forbiddenCoursewareLanding],
+  [alternateCoursewareCourseId, unsupportedCoursewareLanding],
+]);
 let releasePending;
 const checks = [];
 const pageErrors = [];
@@ -38,7 +48,9 @@ function passed(name) { checks.push(name); console.log(`PASS ${name}`); }
 
 /** 所有学校请求返回虚构资料和课件，不连接学校或读取个人登录状态。 */
 async function schoolRoute(route) {
-  const url = new URL(route.request().url());
+  const request = route.request();
+  const url = new URL(request.url());
+  const address = `${url.pathname}${url.search}`;
   if (url.pathname === lectureFilePath || url.pathname === tutorialFilePath) {
     coursewareState.files.push(url.pathname);
     if (url.pathname === tutorialFilePath && coursewareState.failTutorial) return route.fulfill({ status: 503, body: 'test-only' });
@@ -46,22 +58,29 @@ async function schoolRoute(route) {
       ? route.fulfill({ contentType: 'application/pdf', headers: { 'Content-Disposition': 'attachment; filename="Week 01.pdf"' }, body: lectureBytes })
       : route.fulfill({ contentType: 'application/vnd.ms-powerpoint', headers: { 'Content-Disposition': 'attachment; filename="Tutorial 01.ppt"' }, body: tutorialBytes });
   }
-  if (url.pathname === forbiddenCoursewareLanding) coursewareState.unsafeRedirectRequested = true;
-  if (/uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
+  const unsafeRedirect = url.pathname === forbiddenCoursewareLanding || url.pathname === unsupportedCoursewareLandingPath;
+  if (unsafeRedirect) coursewareState.unsafeRedirectRequested = true;
+  if (unsafeRedirect || /uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
   if (!loggedIn || coursewareState.loginExpired) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
   if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: coursewarePortal });
+  if (address === historicalCoursewareAlternate) {
+    coursewareState.entries.push({ courseId: historicalCoursewareCourseId, page: 'course_entry', navigation: request.isNavigationRequest() });
+    return route.fulfill({ status: 404, body: 'test-only' });
+  }
   if (url.pathname.endsWith('/courseMain')) {
     const courseId = url.searchParams.get('course_id');
-    if (courseId === coursewareCourseId || courseId === historicalCoursewareCourseId) {
-      coursewareState.entries.push({ courseId, page: 'courseMain', navigation: route.request().isNavigationRequest() });
-      const location = courseId === coursewareCourseId ? coursewareLanding : forbiddenCoursewareLanding;
+    const location = coursewareRedirects.get(courseId);
+    if (location) {
+      coursewareState.entries.push({ courseId, page: 'courseMain', navigation: request.isNavigationRequest() });
       return route.fulfill({ status: 302, headers: { Location: location } });
     }
   }
   const materials = coursewarePage(url);
   if (materials !== undefined) {
-    if (`${url.pathname}${url.search}` === coursewareLanding) {
-      coursewareState.entries.push({ courseId: coursewareCourseId, page: 'modulepage', navigation: route.request().isNavigationRequest() });
+    if (address === coursewareLanding) {
+      coursewareState.entries.push({ courseId: coursewareCourseId, page: 'modulepage', navigation: request.isNavigationRequest() });
+    } else if (address === alternateCoursewareLanding) {
+      coursewareState.entries.push({ courseId: alternateCoursewareCourseId, page: 'course_entry', navigation: request.isNavigationRequest() });
     }
     if (coursewareState.failDirectory && url.searchParams.get('content_id') === '_962_1') return route.fulfill({ status: 503, body: 'test-only' });
     return route.fulfill({ contentType: 'text/html', body: materials });

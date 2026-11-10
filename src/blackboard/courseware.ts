@@ -118,7 +118,7 @@ export function parseCoursewareListing(document: Document, pageUrl: string, cour
       throw new AppError('login_required', '请在 Blackboard 正常登录后重试。');
     }
   }
-  const page = assignmentReadUrl(pageUrl, course.courseId);
+  const page = url === undefined ? coursewarePageUrl(course.courseId, undefined, pageUrl) : assignmentReadUrl(pageUrl, course.courseId);
   checkContext(document, page, course, url);
   if (!container) throw new AppError('unsupported_page', '未识别到课件目录，请在 Blackboard 打开该课程后重试。');
   return url === undefined ? readMenu(container, page, course) : readFolder(container, page, course);

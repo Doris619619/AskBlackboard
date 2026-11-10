@@ -30,9 +30,14 @@ export function assignmentListing(courseId) { return `<div id="breadcrumbs"><a h
 
 export const coursewareCourseId = '_704_1';
 export const historicalCoursewareCourseId = '_705_1';
+export const alternateCoursewareCourseId = '_706_1';
 export const coursewareLanding = `/webapps/blackboard/execute/modulepage/view?course_id=${coursewareCourseId}&cmp_tab_id=_38993_1&mode=view`;
 export const forbiddenCoursewareLanding = '/webapps/assessment/courseware-redirect-fixture';
-export const coursewarePortal = reportPortal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${coursewareCourseId}">ECE4016:Example Course_L01L02</a></li></ul></div><h3>2600UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${historicalCoursewareCourseId}">ECE4016:Older Course_L02</a></li></ul></div><h3>No Term Assigned`);
+export const unsupportedCoursewareLandingPath = '/webapps/blackboard/content/launchLink.jsp';
+export const unsupportedCoursewareLanding = `${unsupportedCoursewareLandingPath}?course_id=${alternateCoursewareCourseId}&toc_id=_70600_1&mode=view&mode=reset`;
+export const alternateCoursewareLanding = `/webapps/blackboard/execute/announcement?method=search&context=course_entry&course_id=${alternateCoursewareCourseId}&handle=announcements_entry&mode=view`;
+export const historicalCoursewareAlternate = alternateCoursewareLanding.replace(alternateCoursewareCourseId, historicalCoursewareCourseId);
+export const coursewarePortal = reportPortal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${coursewareCourseId}">ECE4016:Example Course_L01L02</a></li><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${alternateCoursewareCourseId}">ECE3060:Introduction to Robotics_L01</a></li></ul></div><h3>2600UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${historicalCoursewareCourseId}">ECE4016:Older Course_L02</a></li></ul></div><h3>No Term Assigned`);
 export const lectureFilePath = '/bbcswebdav/pid-961-dt-content-rid-971_1/xid-971_1';
 export const tutorialFilePath = '/bbcswebdav/xid-972_1';
 export const unselectedFilePath = '/bbcswebdav/xid-973_1';
@@ -40,8 +45,11 @@ export const assignmentAttachmentPath = '/bbcswebdav/xid-974_1';
 export const lectureBytes = Buffer.from('%PDF-1.7\nSynthetic courseware PDF\n%%EOF');
 export const tutorialBytes = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.from('Synthetic legacy PPT')]);
 
-/** 为同一虚构课程提供教师菜单、多层目录、课件及不应暴露的作业附件。 */
+/** 为虚构课程提供教师菜单、多层目录、课件及不应暴露的作业附件。 */
 export function coursewarePage(url) {
+  if (`${url.pathname}${url.search}` === alternateCoursewareLanding) {
+    return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${alternateCoursewareCourseId}">Robotics</a></div><ul id="courseMenuPalette_contents"><li><a href="/webapps/blackboard/content/listContent.jsp?course_id=${alternateCoursewareCourseId}&amp;content_id=_963_1">Content</a></li></ul>`;
+  }
   if (url.searchParams.get('course_id') !== coursewareCourseId) return undefined;
   /** 拼接虚构课程内可跟随的内容列表链接。 */
   function folder(contentId) { return `/webapps/blackboard/content/listContent.jsp?course_id=${coursewareCourseId}&amp;content_id=${contentId}`; }

@@ -12,7 +12,7 @@ async function request<T>(message: ExtensionMessage): Promise<T> {
   if (!runtime?.ok || runtime.data?.protocol !== RUNTIME_PROTOCOL) throw new AppError('extension_reload_required', RELOAD_REQUIRED_MESSAGE);
   const result: RuntimeResult<T> = await chrome.runtime.sendMessage(message);
   if (result?.ok === false && result.error.code === 'invalid_message') throw new AppError('extension_reload_required', RELOAD_REQUIRED_MESSAGE);
-  if (!result?.ok) throw new AppError(result?.error?.code ?? 'connection_failed', result?.error?.message ?? '扩展连接已断开，请重新打开侧栏。');
+  if (!result?.ok) throw new AppError(result?.error?.code ?? 'connection_failed', result?.error?.message ?? '扩展连接已断开，请重新打开侧栏。', result?.error?.diagnostic);
   return result.data;
 }
 

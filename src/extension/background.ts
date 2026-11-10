@@ -221,8 +221,14 @@ async function collectCourseware(tabId: number, course: Course, folderUrl?: stri
       try { actual = assignmentReadUrl(tab.url, course.courseId); }
       catch { continue; }
       if (folderUrl && (actual.pathname !== url.pathname || actual.searchParams.get('content_id') !== url.searchParams.get('content_id'))) continue;
-      return readRendered<CoursewareListing>(tab.id, { type: 'read_courseware_page', course, folderUrl });
+      try {
+        return await readRendered<CoursewareListing>(tab.id, { type: 'read_courseware_page', course, folderUrl });
+      } catch (fallbackError) {
+        if (!(fallbackError instanceof AppError) || !error.diagnostic) throw fallbackError;
+        throw new AppError(fallbackError.code, fallbackError.message, `${error.diagnostic}\n备用页面读取失败（${fallbackError.code}）`);
+      }
     }
+    if (error.diagnostic) throw new AppError(error.code, error.message, `${error.diagnostic}\n未找到已打开的同课程备用页面。`);
     throw error;
   }
 }
@@ -286,7 +292,9 @@ function messageListener(raw: unknown, sender: chrome.runtime.MessageSender, res
   /** 将课程、公告或原文打开结果回复受信侧栏。 */
   function succeeded(data: unknown): void { respond({ ok: true, data }); }
   /** 将采集失败转换成稳定业务代码和无凭据说明。 */
-  function failed(error: unknown): void { respond({ ok: false, error: { code: error instanceof AppError ? error.code : 'read_failed', message: friendlyError(error) } }); }
+  function failed(error: unknown): void {
+    respond({ ok: false, error: { code: error instanceof AppError ? error.code : 'read_failed', message: friendlyError(error), diagnostic: error instanceof AppError ? error.diagnostic : undefined } });
+  }
   void handleMessage(raw).then(succeeded, failed);
   return true;
 }
