@@ -55,8 +55,9 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   const selectedCourse = await panel.getByLabel('选择课程和教学班').inputValue();
   const turns = await panel.locator('.conversation-turn').count();
   await panel.getByRole('button', { name: '课件', exact: true }).click();
-  await panel.getByRole('button', { name: /ECE4016.*L02/ }).waitFor();
-  await panel.getByRole('button', { name: /ECE4016.*L01/ }).click();
+  await panel.getByRole('button', { name: 'ECE4016: Older Course', exact: true }).waitFor();
+  await panel.getByRole('button', { name: 'ECE4016: Example Course', exact: true }).click();
+  await panel.getByRole('heading', { name: 'ECE4016: Example Course', exact: true }).waitFor();
   const content = panel.getByRole('button', { name: 'Content', exact: true });
   const tutorial = panel.getByRole('button', { name: 'Tutorial', exact: true });
   await tutorial.waitFor();

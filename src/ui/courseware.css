@@ -61,7 +61,7 @@
 .courseware-entry { justify-content: space-between; border: 0; }
 .courseware-entry svg, .courseware-results svg, .courseware-back svg { width: 14px; height: 14px; color: var(--secondary); }
 .courseware-entry:hover:not(:disabled), .courseware-file:hover { background: var(--surface); }
-.courseware-entry small, .courseware-file small {
+.courseware-file small {
   display: block;
   color: var(--secondary);
   font-size: var(--type-caption);

@@ -7,6 +7,7 @@ import type { Course, CourseDiscovery } from '../shared/types';
 import { Icon } from './icons';
 import { coursewareSelectionKey, useCoursewareDownload } from './courseware-download-flow';
 import { CoursewareDownloadResults, CoursewareDownloadStatus } from './courseware-download-page';
+import { coursewareTitle } from './courseware-title';
 
 interface PanelProps {
   hidden: boolean;
@@ -66,7 +67,7 @@ export function CoursewarePanel({ hidden, discovery, discovering, connectionErro
           <ul className="courseware-list">
             {courses.map(/** 课程行进入课件目录，不更改问答的课程。 */ function renderCourse(item) {
               return <li key={item.courseId}><button type="button" className="courseware-entry" onClick={/** 选择此课件课程。 */ function openCourse() { setCourseId(item.courseId); }}>
-                <span><strong>{item.code}{item.section ? ` · ${item.section}` : ''}</strong>{item.title && item.title !== item.code && <small>{item.title}</small>}</span><Icon name="chevron" />
+                <strong>{coursewareTitle(item)}</strong><Icon name="chevron" />
               </button></li>;
             })}
           </ul>
@@ -92,7 +93,6 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
   const selectedHere = files.filter(/** 只用当前目录的已勾选文件确定全选状态。 */ function isSelected(item) { return selection.has(coursewareSelectionKey(item)); }).length;
   const allSelected = files.length > 0 && selectedHere === files.length;
   const busy = download.stage !== 'idle';
-  const courseLabel = `${course.code}${course.section ? ` · ${course.section}` : ''}`;
 
   /** 仅在进入目录或显式重试时请求页面，忽略离开后返回的结果。 */
   useEffect(function loadFolder() {
@@ -150,8 +150,8 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
         {folder && <button type="button" className="text-button" disabled={busy} onClick={/** 返回当前目录的直接上一级。 */ function goBack() { goTo(folders.slice(0, -1)); }}><Icon name="chevron" />返回上一层</button>}
         <button type="button" className="text-button" disabled={busy} onClick={returnToCourses}>{folder ? '返回课程列表' : <><Icon name="chevron" />返回课程列表</>}</button>
       </div>
-      <h2 ref={heading} tabIndex={-1} className="courseware-title">{folder?.name ?? courseLabel}</h2>
-      <p className="courseware-path">{folder ? [courseLabel, ...folders.map(/** 使用老师的原始目录名。 */ function name(item) { return item.name; })].join(' / ') : course.termLabel}</p>
+      <h2 ref={heading} tabIndex={-1} className="courseware-title">{folder?.name ?? coursewareTitle(course)}</h2>
+      <p className="courseware-path">{folder ? [course.code, ...folders.map(/** 使用老师的原始目录名。 */ function name(item) { return item.name; })].join(' / ') : course.termLabel}</p>
       <CoursewareDownloadResults report={download.report} />
       {!visiblePage && <p role="status" className="muted">正在读取{folder ? '目录' : '课件栏目'}…</p>}
       {visiblePage?.error && <div>

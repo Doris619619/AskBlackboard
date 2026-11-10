@@ -29,7 +29,7 @@ export function assignmentRoot(courseId) { return `<ul id="courseMenuPalette_con
 export function assignmentListing(courseId) { return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${courseId}">Example</a></div><h1 id="pageTitleHeader">Assignments</h1><ul id="content_listContainer"><li id="contentListItem:_910_1"><img class="item_icon" alt="Assignment"><div class="item" id="_910_1"><h3><a href="/webapps/assignment/uploadAssignment?course_id=${courseId}&content_id=_910_1">Assignment1</a></h3></div><div class="vtbegenerated"><p>The deadline is 21:30, 22 Nov 2026.</p></div></li></ul>`; }
 
 export const coursewareCourseId = '_704_1';
-export const coursewarePortal = reportPortal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${coursewareCourseId}">ECE4016 L01 Example Course</a></li></ul></div><h3>2600UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=_705_1">ECE4016 L02 Older Course</a></li></ul></div><h3>No Term Assigned`);
+export const coursewarePortal = reportPortal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${coursewareCourseId}">ECE4016:Example Course_L01L02</a></li></ul></div><h3>2600UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=_705_1">ECE4016:Older Course_L02</a></li></ul></div><h3>No Term Assigned`);
 export const lectureFilePath = '/bbcswebdav/pid-961-dt-content-rid-971_1/xid-971_1';
 export const tutorialFilePath = '/bbcswebdav/xid-972_1';
 export const unselectedFilePath = '/bbcswebdav/xid-973_1';
