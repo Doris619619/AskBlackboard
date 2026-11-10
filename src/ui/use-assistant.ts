@@ -2,12 +2,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { defaultCourse, resolveCourse } from '../blackboard/course-resolution';
 import { askDeepSeek } from '../ai/deepseek';
-import { collectAnnouncements, discoverCourses } from '../shared/browser-client';
+import { collectAnnouncements, discoverCourses, readCachedCourses } from '../shared/browser-client';
 import { collectDeadlineSources } from '../shared/deadline-client';
 import { isAssignmentDeadlineQuestion, answerAssignmentDeadlines } from '../blackboard/deadlines';
 import { AppError, friendlyError } from '../shared/errors';
 import { loadSettings, saveSettings } from '../shared/settings';
-import type { AnnouncementSnapshot, Course, CourseDiscovery, ModelAnswer, Settings } from '../shared/types';
+import { BROWSE_CACHE_KEY, type AnnouncementSnapshot, type Course, type CourseBrowseSnapshot, type ModelAnswer, type Settings } from '../shared/types';
 
 export interface Turn {
   id: number;
@@ -24,7 +24,8 @@ const initialSettings: Settings = { apiKey: '', model: 'deepseek-flash', theme: 
 /** 管理侧栏会话；取消只中断模型并忽略晚到的采集结果，不修改 Blackboard。 */
 export function useAssistant() {
   const [settings, setSettings] = useState<Settings>(initialSettings);
-  const [discovery, setDiscovery] = useState<CourseDiscovery | null>(null);
+  const [browse, setBrowse] = useState<CourseBrowseSnapshot | null>(null);
+  const discovery = browse?.discovery ?? null;
   const [selectedId, setSelectedId] = useState('');
   const [discovering, setDiscovering] = useState(false);
   const [connectionError, setConnectionError] = useState('');
@@ -35,31 +36,51 @@ export function useAssistant() {
   const sequence = useRef(0);
   const mounted = useRef(true);
   const discoverySequence = useRef(0);
-  const discoveryRequest = useRef<Promise<CourseDiscovery> | null>(null);
+  const revokedScopes = useRef(new Set<string>());
+  const discoveryRequest = useRef<{ cached: Promise<CourseBrowseSnapshot | null>; fresh: Promise<CourseBrowseSnapshot> } | null>(null);
   const settingsRevision = useRef(0);
   const running = useRef(false);
   const controller = useRef<AbortController | null>(null);
   const manuallySelected = useRef(false);
   const extensionAvailable = Boolean(globalThis.chrome?.runtime?.id);
 
-  /** 重新从登录页面发现课程；连接失败保留已发现课程，允许恢复后重试。 */
+  /** 先显示仍可复用的课程，再读取 Blackboard 最新目录。 */
   const refreshCourses = useCallback(async function refreshCourses() {
     if (!extensionAvailable) return;
     const token = ++discoverySequence.current;
     setDiscovering(true); setConnectionError('');
+    /** 只提交这次仍在运行的课程读取，保留仍有效的课程选择。 */
+    function show(snapshot: CourseBrowseSnapshot) {
+      if (!mounted.current || token !== discoverySequence.current) return;
+      if (snapshot.cacheScope && revokedScopes.current.has(snapshot.cacheScope)) return;
+      setBrowse(snapshot);
+      setSelectedId(/** 课程仍可见时保留选择。 */ function preserveSelection(previous) {
+        if (snapshot.discovery.courses.some(/** 检查先前选择。 */ function hasPrevious(course) { return course.courseId === previous; })) return previous;
+        manuallySelected.current = false;
+        return defaultCourse(snapshot.discovery);
+      });
+    }
     try {
       if (!discoveryRequest.current) {
-        const request = discoverCourses();
+        const cached = readCachedCourses().catch(/** 缓存不可用时仍执行实时读取。 */ function cacheMiss() { return null; });
+        const fresh = cached.then(discoverCourses);
+        const request = { cached, fresh };
         discoveryRequest.current = request;
         /** 结束后释放共用请求；StrictMode 二次挂载在请求期间复用同一采集任务。 */
         function releaseRequest() { if (discoveryRequest.current === request) discoveryRequest.current = null; }
-        void request.then(releaseRequest, releaseRequest);
+        void fresh.then(releaseRequest, releaseRequest);
       }
-      const found = await discoveryRequest.current;
+      const { cached, fresh } = discoveryRequest.current;
+      const snapshot = await cached;
+      if (snapshot) show(snapshot);
+      show(await fresh);
+      if (mounted.current && token === discoverySequence.current) setNeedsReload(false);
+    } catch (error) {
       if (!mounted.current || token !== discoverySequence.current) return;
-      setDiscovery(found); setNeedsReload(false);
-      setSelectedId(/** 保留仍有效的明确选择；新学期回退默认值时取消之前班组选择的标记。 */ function preserveSelection(previous) { if (found.courses.some(/** 检查之前课程是否仍可见。 */ function hasPrevious(course) { return course.courseId === previous; })) return previous; manuallySelected.current = false; return defaultCourse(found); });
-    } catch (error) { if (mounted.current && token === discoverySequence.current) { setConnectionError(friendlyError(error)); setNeedsReload(error instanceof AppError && error.code === 'extension_reload_required'); } }
+      if (error instanceof AppError && ['login_required', 'consent_required', 'account_unknown', 'course_changed', 'browse_context_changed', 'extension_reload_required'].includes(error.code)) setBrowse(null);
+      setConnectionError(friendlyError(error));
+      setNeedsReload(error instanceof AppError && error.code === 'extension_reload_required');
+    }
     finally { if (mounted.current && token === discoverySequence.current) setDiscovering(false); }
   }, [extensionAvailable]);
 
@@ -70,10 +91,24 @@ export function useAssistant() {
     const revision = settingsRevision.current;
     /** 读取凭据时只更新当前挂载侧栏，不向后台或页面发送。 */
     async function readSettings() { try { const loaded = await loadSettings(); if (alive && revision === settingsRevision.current) setSettings(loaded); } catch { if (alive) setNotice('设置暂时无法读取，请重新打开侧栏。'); } }
+    /** 登录切换会撤下旧范围内已经显示的课程和目录。 */
+    function cacheChanged(changes: Record<string, chrome.storage.StorageChange>, area: string) {
+      if (area !== 'session') return;
+      const change = changes[BROWSE_CACHE_KEY];
+      const scope = (change?.oldValue as { scope?: unknown } | undefined)?.scope;
+      const next = (change?.newValue as { scope?: unknown } | undefined)?.scope;
+      if (typeof scope !== 'string' || scope === next) return;
+      revokedScopes.current.add(scope);
+      setBrowse(/** 较新的账号结果不受旧缓存失效影响。 */ function invalidate(previous) { return previous?.cacheScope === scope ? null : previous; });
+    }
+    if (extensionAvailable) chrome.storage.onChanged.addListener(cacheChanged);
     void readSettings(); void refreshCourses();
     /** 卸载侧栏时终止模型请求，阻止晚到的回答改变会话。 */
-    return function cleanup() { alive = false; mounted.current = false; running.current = false; discoverySequence.current += 1; sequence.current += 1; controller.current?.abort(); };
-  }, [refreshCourses]);
+    return function cleanup() {
+      if (extensionAvailable) chrome.storage.onChanged.removeListener(cacheChanged);
+      alive = false; mounted.current = false; running.current = false; discoverySequence.current += 1; sequence.current += 1; controller.current?.abort();
+    };
+  }, [extensionAvailable, refreshCourses]);
 
   /** 切换用户明确选择的课程，后续歧义课程以该选择为准。 */
   function selectCourse(courseId: string) { manuallySelected.current = true; setSelectedId(courseId); setNotice(''); }
@@ -135,5 +170,5 @@ export function useAssistant() {
   /** 重试已有问题；采集成功时只重新请求模型，避免丢弃现成的原文。 */
   function retry(turn: Turn) { if (running.current) return; if (!settings.apiKey && !isAssignmentDeadlineQuestion(turn.question)) { setNotice('请先在设置中添加 DeepSeek API 密钥，再重试。'); return; } void run(turn.question, turn.course, turn.snapshot, turn.id); }
 
-  return { settings, updateSettings, discovery, selectedId, selectCourse, discovering, refreshCourses, connectionError, needsReload, notice, turns, busy, ask, cancel, retry, extensionAvailable };
+  return { settings, updateSettings, discovery, cacheScope: browse?.cacheScope, selectedId, selectCourse, discovering, refreshCourses, connectionError, needsReload, notice, turns, busy, ask, cancel, retry, extensionAvailable };
 }

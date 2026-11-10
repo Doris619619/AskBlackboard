@@ -1,10 +1,18 @@
-/** 文件用途：在隔离浏览器加载实际 dist 扩展，使用虚构网络验证采集、问答、回跳与恢复；不代表真实学校/模型验收。 */
+/** 文件用途：在隔离浏览器加载实际扩展，用虚构网络验证采集、问答、回跳、恢复与课件保存。 */
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl, assignmentRoot, assignmentListing } from '../tests/browser/fixtures.mjs';
-import { reportPortal, reportAnnouncements } from '../tests/browser/fixtures.mjs';
+import {
+  coursewarePortal, reportAnnouncements, coursewarePage, coursewareCourseId, coursewareLanding,
+  forbiddenCoursewareLanding, historicalCoursewareCourseId, historicalCoursewareAlternate,
+  alternateCoursewareCourseId, unsupportedCoursewareLanding,
+  unsupportedCoursewareLandingPath, lectureFileEntryPath, lectureFilePath, tutorialFilePath, unselectedFilePath, lectureBytes, tutorialBytes,
+} from '../tests/browser/fixtures.mjs';
+import { runCoursewareSmoke } from './browser-courseware-smoke.mjs';
+import { runCourseDiscoverySmoke } from './browser-discovery-smoke.mjs';
+import { runCourseCacheSmoke } from './browser-cache-smoke.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
 await mkdir(output, { recursive: true });
@@ -26,6 +34,14 @@ let announcementReads = 0;
 let modelCalls = 0;
 let unsafeRequests = 0;
 let assignmentReads = 0;
+let authorizationReads = 0;
+let delayAuthorization = false;
+const coursewareState = { files: [], fileEntries: [], entries: [], directoryReads: 0, unsafeRedirectRequested: false, failDirectory: true, failTutorial: true, loginExpired: false };
+const coursewareRedirects = new Map([
+  [coursewareCourseId, coursewareLanding],
+  [historicalCoursewareCourseId, forbiddenCoursewareLanding],
+  [alternateCoursewareCourseId, unsupportedCoursewareLanding],
+]);
 let releasePending;
 const checks = [];
 const pageErrors = [];
@@ -34,12 +50,57 @@ let panel;
 /** 记录已完成且有断言支持的用例，失败立即中止，避免生成假的全绿报告。 */
 function passed(name) { checks.push(name); console.log(`PASS ${name}`); }
 
-/** 所有学校请求只返回虚构门户/公告，不连接学校，也不读取个人登录状态。 */
+/** 所有学校请求返回虚构资料和课件，不连接学校或读取个人登录状态。 */
 async function schoolRoute(route) {
-  const url = new URL(route.request().url());
-  if (/uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
-  if (!loggedIn) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
-  if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: reportPortal });
+  const request = route.request();
+  const url = new URL(request.url());
+  const address = `${url.pathname}${url.search}`;
+  const courseMenu = url.pathname.endsWith('/announcement') && url.searchParams.get('context') === 'course_entry';
+  if (courseMenu || /\/(?:tabAction|courseMain|modulepage\/view|listContent\.jsp)$/.test(url.pathname)) coursewareState.directoryReads += 1;
+  if (url.href === portalUrl && !request.isNavigationRequest()) {
+    authorizationReads += 1;
+    if (delayAuthorization) {
+      await new Promise(/** 让同轮公告和作业授权请求稳定重叠。 */ function overlap(resolve) { setTimeout(resolve, 300); });
+    }
+  }
+  if (address === lectureFileEntryPath) {
+    coursewareState.fileEntries.push(address);
+    if (!(await request.headerValue('cookie'))?.includes('fixture_courseware_session=active')) return route.fulfill({ status: 401 });
+    return route.fulfill({ contentType: 'text/html', body: `<title>Course file</title><iframe src="${lectureFilePath}"></iframe><img src="${unselectedFilePath}" alt=""><script>fetch('${unselectedFilePath}')</script>` });
+  }
+  if (url.pathname === lectureFilePath || url.pathname === tutorialFilePath) {
+    coursewareState.files.push(url.pathname);
+    if (url.pathname === lectureFilePath && (!coursewareState.fileEntries.length || !(await request.headerValue('cookie'))?.includes('fixture_courseware_session=active'))) return route.abort();
+    if (url.pathname === tutorialFilePath && coursewareState.failTutorial) return route.fulfill({ status: 503, body: 'test-only' });
+    return url.pathname === lectureFilePath
+      ? route.fulfill({ contentType: 'application/octet-stream', body: lectureBytes })
+      : route.fulfill({ contentType: 'application/vnd.ms-powerpoint', headers: { 'Content-Disposition': 'attachment; filename="Tutorial 01.ppt"' }, body: tutorialBytes });
+  }
+  const unsafeRedirect = url.pathname === forbiddenCoursewareLanding || url.pathname === unsupportedCoursewareLandingPath;
+  if (unsafeRedirect) coursewareState.unsafeRedirectRequested = true;
+  if (unsafeRedirect || /uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
+  if (!loggedIn || coursewareState.loginExpired) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
+  if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: coursewarePortal });
+  if (courseMenu) {
+    coursewareState.entries.push({ courseId: url.searchParams.get('course_id'), page: 'course_entry', navigation: request.isNavigationRequest() });
+    if (address === historicalCoursewareAlternate) return route.fulfill({ status: 404, body: 'test-only' });
+  }
+  if (url.pathname.endsWith('/courseMain')) {
+    const courseId = url.searchParams.get('course_id');
+    const location = coursewareRedirects.get(courseId);
+    if (location) {
+      coursewareState.entries.push({ courseId, page: 'courseMain', navigation: request.isNavigationRequest() });
+      return route.fulfill({ status: 302, headers: { Location: location } });
+    }
+  }
+  const materials = coursewarePage(url);
+  if (materials !== undefined) {
+    if (address === coursewareLanding) {
+      coursewareState.entries.push({ courseId: coursewareCourseId, page: 'modulepage', navigation: request.isNavigationRequest() });
+    }
+    if (coursewareState.failDirectory && url.searchParams.get('content_id') === '_962_1') return route.fulfill({ status: 503, body: 'test-only' });
+    return route.fulfill({ contentType: 'text/html', body: materials });
+  }
   if (url.pathname.endsWith('/courseMain')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentRoot(url.searchParams.get('course_id')) }); }
   if (url.pathname.endsWith('/listContent.jsp')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentListing(url.searchParams.get('course_id')) }); }
   if (url.pathname.endsWith('/announcement')) {
@@ -81,7 +142,54 @@ async function ask(question) {
 /** 等待可见文字，不通过读取 React 内部状态替代实际页面输出。 */
 async function visible(text) { await panel.getByText(text, { exact: false }).last().waitFor({ timeout: 15000 }); }
 
+/** 让隔离浏览器先接管来源标签，再原样导航到扩展请求的地址。 */
+async function openSourceFixture(worker, trigger, expectedUrl) {
+  await worker.evaluate(/** 仅延迟虚构学校来源标签的首个离线导航。 */ function holdSourceNavigation(origin) {
+    const original = chrome.tabs.create;
+    const fixture = { restore: original };
+    globalThis.sourceNavigationFixture = fixture;
+    /** 使用实际扩展新建的同一标签页，保留原地址和高亮流程。 */
+    chrome.tabs.create = async function createRoutedSource(options) {
+      if (!options.active || !options.url?.startsWith(`${origin}/`)) return original.call(chrome.tabs, options);
+      const attached = Promise.withResolvers();
+      fixture.requested = options.url;
+      fixture.resume = attached.resolve;
+      const tab = await original.call(chrome.tabs, { ...options, url: 'about:blank' });
+      await attached.promise;
+      return chrome.tabs.update(tab.id, { url: options.url });
+    };
+  }, new URL(expectedUrl).origin);
+
+  try {
+    const created = context.waitForEvent('page');
+    await trigger.click();
+    const page = await created;
+    const requested = await worker.evaluate(/** 捕获扩展实际提交的地址。 */ function requestedUrl() { return globalThis.sourceNavigationFixture.requested; });
+    assert.equal(requested, expectedUrl);
+    await page.route('https://bb.cuhk.edu.cn/**', schoolRoute);
+    await worker.evaluate(/** 离线路由就绪后放行首个导航。 */ function attachSource() { globalThis.sourceNavigationFixture.resume(); });
+    await page.waitForURL(expectedUrl);
+    return page;
+  } finally {
+    await worker.evaluate(/** 恢复测试后台 API，并释放可能挂起的夹具。 */ function restoreSourceNavigation() {
+      const fixture = globalThis.sourceNavigationFixture;
+      chrome.tabs.create = fixture.restore;
+      fixture.resume?.();
+      delete globalThis.sourceNavigationFixture;
+    });
+  }
+}
+
+/** 验证点击后真实内容脚本高亮了本条作业或公告。 */
+async function expectSourceHighlight(page, itemId) {
+  await page.waitForFunction(/** 证据可高亮在整条记录或其引用段落上。 */ function hasHighlight(id) {
+    const item = document.getElementById(id);
+    return item && [item, ...item.querySelectorAll('[style]')].some(/** 比对内容脚本设置的高亮描边。 */ function outlined(element) { return element.style.outlineWidth === '3px'; });
+  }, itemId);
+}
+
 try {
+  await context.addCookies([{ name: 'fixture_courseware_session', value: 'active', url: 'https://bb.cuhk.edu.cn', secure: true, httpOnly: true, sameSite: 'Lax' }]);
   await context.route('https://bb.cuhk.edu.cn/**', schoolRoute);
   await context.route('https://api.deepseek.com/**', modelRoute);
   // 路由返回虚构资料；未被接管的 chrome.tabs.create 首次导航也不能访问真实学校。
@@ -89,6 +197,7 @@ try {
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
   const id = new URL(worker.url()).hostname;
   const school = context.pages()[0];
+  await runCourseDiscoverySmoke(context, worker, school, `chrome-extension://${id}/sidepanel.html`, passed);
   await school.goto(portalUrl);
   panel = await context.newPage();
   /** 捕获页面运行错误，只保留消息，不记录请求头、存储或表单值。 */
@@ -98,33 +207,33 @@ try {
   assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '');
   passed('actual extension worker + content script discover course');
 
+  const beforeDeadlineAuthorization = authorizationReads;
+  delayAuthorization = true;
   await ask('GED2005最新的作业在啥时候截止');
   await panel.locator('.deadline-quote').filter({ hasText: 'The deadline is 21:30, 22 Nov 2026.' }).waitFor();
+  delayAuthorization = false;
+  assert.equal(authorizationReads - beforeDeadlineAuthorization, 1);
   assert.equal(modelCalls, 0);
   assert.equal(assignmentReads, 2);
   assert.equal(await panel.getByRole('dialog').count(), 0);
   assert.equal(await panel.locator('.deadline-time').innerText(), '2026年11月22日 21:30');
   await panel.screenshot({ path: path.join(output, 'assignment-deadline.png') });
   passed('assignment deadlines work without API key or model requests');
-  const assignmentSourcePromise = context.waitForEvent('page');
-  await panel.getByRole('button', { name: '来源：Assignment1' }).click();
-  const assignmentSource = await assignmentSourcePromise;
-  await assignmentSource.waitForURL('**/listContent.jsp?course_id=_700_1&content_id=_900_1#_910_1');
-  // 离线首次导航可能进入浏览器错误页；明确重新导航到已断言的虚构列表。
-  await assignmentSource.goto('https://bb.cuhk.edu.cn/webapps/blackboard/content/listContent.jsp?course_id=_700_1&content_id=_900_1#_910_1');
-  const assignmentHighlight = await worker.evaluate(async function highlightAssignment() {
-    const tabs = await chrome.tabs.query({ url: 'https://bb.cuhk.edu.cn/*' });
-    const tab = tabs.find(t => t.url.includes('#_910_1'));
-    return chrome.tabs.sendMessage(tab.id, { type: 'highlight_source', sourceId: 'assignment:_910_1', quote: 'The deadline is 21:30, 22 Nov 2026.' });
-  });
-  assert.equal(assignmentHighlight.ok, true);
+  const assignmentSource = await openSourceFixture(worker, panel.getByRole('button', { name: '来源：Assignment1' }),
+    'https://bb.cuhk.edu.cn/webapps/blackboard/content/listContent.jsp?course_id=_700_1&content_id=_900_1#_910_1');
+  await expectSourceHighlight(assignmentSource, 'contentListItem:_910_1');
   assert.equal(unsafeRequests, 0);
   await assignmentSource.close();
   passed('assignment evidence opens and highlights a read-only list, never a submission endpoint');
   await panel.reload(); await visible('已连接 Blackboard');
 
+  const beforeReportAuthorization = authorizationReads;
+  delayAuthorization = true;
   await ask('ece3810的report1的ddl是啥时候');
   await panel.locator('.deadline-time').filter({ hasText: '2026年11月19日 20:00' }).waitFor();
+  delayAuthorization = false;
+  assert.equal(authorizationReads - beforeReportAuthorization, 1);
+  passed('parallel deadline reads share one live portal check and the next question validates again');
   assert.equal(await panel.locator('.deadline-item').count(), 2);
   assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '_703_1');
   assert.equal(modelCalls, 0);
@@ -170,30 +279,17 @@ try {
   assert.ok(announcementReads > 0);
   passed('keyboard + actual collection + model contract + visible answer');
 
-  const sourcePromise = context.waitForEvent('page');
   assert.equal(await panel.locator('.cited-sources .source-row[open]').count(), 1);
-  await panel.locator('.cited-sources').getByRole('button', { name: '打开公告原文' }).first().click();
-  const source = await sourcePromise;
-  await source.waitForURL(`${announcementUrl}#_901_1`);
+  const source = await openSourceFixture(worker, panel.locator('.cited-sources').getByRole('button', { name: '打开公告原文' }).first(), `${announcementUrl}#_901_1`);
   passed('source click opens expected course URL and announcement anchor');
-  // chrome.tabs.create 的首次导航早于 Playwright 的路由接管；重新导航后独立验证真实内容脚本定位。
-  // 该检查不能代替真实学校页面上的一次点击回跳验收。
-  await source.reload();
-  await source.locator('#_901_1').waitFor();
-  const highlightResult = await worker.evaluate(async function highlightTestSource(url) {
-    const tabs = await chrome.tabs.query({ url: 'https://bb.cuhk.edu.cn/*' });
-    const tab = tabs.find(candidate => candidate.url === url);
-    return chrome.tabs.sendMessage(tab.id, { type: 'highlight_source', sourceId: '_901_1', quote: 'Quiz 1 will take place on Monday, October 12.' });
-  }, `${announcementUrl}#_901_1`);
-  assert.equal(highlightResult.ok, true);
   try {
-    await source.waitForFunction(function hasHighlight() { return [...document.querySelectorAll('[style]')].some(e => e.style.outline.includes('3px')); });
+    await expectSourceHighlight(source, '_901_1');
   } catch (error) {
     console.error('Source diagnostics:', JSON.stringify({ url: source.url(), title: await source.title(), itemCount: await source.locator('#announcementList > li').count(), errors: await panel.locator('.inline-error').allTextContents() }));
     await source.screenshot({ path: path.join(output, 'source-failure.png') });
     throw error;
   }
-  passed('content script highlights fixture after controlled navigation');
+  passed('content script highlights the clicked announcement during its first navigation');
   await source.close();
 
   await ask('Quiz 1 几点开始？');
@@ -265,12 +361,15 @@ try {
 
   loggedIn = false;
   const callsBeforeLoginFailure = modelCalls;
+  const beforeLoginAuthorization = authorizationReads;
   await ask('Quiz 1 是什么时候？');
   await visible('登录');
   assert.equal(modelCalls, callsBeforeLoginFailure);
+  assert.equal(authorizationReads - beforeLoginAuthorization, 1);
   loggedIn = true;
   await panel.locator('.conversation-turn').last().getByRole('button', { name: '重试读取' }).click();
   await panel.locator('.conversation-turn').last().getByText(found.answer, { exact: true }).waitFor();
+  assert.equal(authorizationReads - beforeLoginAuthorization, 2);
   passed('expired login does not call model and recovers after retry');
   await panel.setViewportSize({ width: 390, height: 844 });
   await panel.getByLabel('选择课程和教学班').selectOption('_700_1');
@@ -281,11 +380,9 @@ try {
   await panel.screenshot({ path: path.join(output, 'course-switch.png') });
   passed('GEB abbreviation overrides selected GED; model receives only GEB evidence');
   assert.equal(await panel.locator('.conversation-turn').last().locator('.cited-sources .source-row').count(), 1);
-  const gebSourcePromise = context.waitForEvent('page');
   assert.equal(await panel.locator('.conversation-turn').last().locator('.cited-sources blockquote').count(), 2);
-  await panel.locator('.conversation-turn').last().getByRole('button', { name: '打开公告原文' }).first().click();
-  const gebSource = await gebSourcePromise;
-  await gebSource.waitForURL(`${gebAnnouncementUrl}#_902_1`);
+  const gebSource = await openSourceFixture(worker, panel.locator('.conversation-turn').last().getByRole('button', { name: '打开公告原文' }).first(), `${gebAnnouncementUrl}#_902_1`);
+  await expectSourceHighlight(gebSource, '_902_1');
   await gebSource.close();
   passed('GEB source link belongs to GEB and never GED');
   const beforeRejected = { calls: modelCalls, reads: announcementReads, turns: await panel.locator('.conversation-turn').count() };
@@ -298,6 +395,8 @@ try {
     assert.equal(await panel.locator('.conversation-turn').count(), beforeRejected.turns);
   }
   passed('ambiguous and unknown course requests preserve draft without collection or model calls');
+  await runCoursewareSmoke(panel, coursewareState, output, passed);
+  await runCourseCacheSmoke(context, school, `chrome-extension://${id}/sidepanel.html`, passed);
   assert.deepEqual(pageErrors, []);
   assert.equal(unsafeRequests, 0);
   await writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', kind: 'real-extension-synthetic-network', browser: context.browser()?.version(), checks, announcementReads, modelCalls }, null, 2));

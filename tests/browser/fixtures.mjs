@@ -27,3 +27,41 @@ export function completion(answer) { return { choices: [{ finish_reason: 'stop',
 export function assignmentRoot(courseId) { return `<ul id="courseMenuPalette_contents"><li><a href="/webapps/blackboard/content/listContent.jsp?course_id=${courseId}&content_id=_900_1">Assignments</a></li></ul>`; }
 /** 作业提交链接仅用于辨认类型，浏览器验收会断言该地址从未被访问。 */
 export function assignmentListing(courseId) { return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${courseId}">Example</a></div><h1 id="pageTitleHeader">Assignments</h1><ul id="content_listContainer"><li id="contentListItem:_910_1"><img class="item_icon" alt="Assignment"><div class="item" id="_910_1"><h3><a href="/webapps/assignment/uploadAssignment?course_id=${courseId}&content_id=_910_1">Assignment1</a></h3></div><div class="vtbegenerated"><p>The deadline is 21:30, 22 Nov 2026.</p></div></li></ul>`; }
+
+export const coursewareCourseId = '_704_1';
+export const historicalCoursewareCourseId = '_705_1';
+export const alternateCoursewareCourseId = '_706_1';
+export const coursewareLanding = `/webapps/blackboard/execute/modulepage/view?course_id=${coursewareCourseId}&cmp_tab_id=_38993_1&mode=view`;
+export const forbiddenCoursewareLanding = '/webapps/assessment/courseware-redirect-fixture';
+export const unsupportedCoursewareLandingPath = '/webapps/blackboard/content/launchLink.jsp';
+export const unsupportedCoursewareLanding = `${unsupportedCoursewareLandingPath}?course_id=${alternateCoursewareCourseId}&toc_id=_70600_1&mode=view&mode=reset`;
+export const alternateCoursewareLanding = `/webapps/blackboard/execute/announcement?method=search&context=course_entry&course_id=${alternateCoursewareCourseId}&handle=announcements_entry&mode=view`;
+export const historicalCoursewareAlternate = alternateCoursewareLanding.replace(alternateCoursewareCourseId, historicalCoursewareCourseId);
+export const coursewarePortal = reportPortal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${coursewareCourseId}">ECE4016:Example Course_L01L02</a></li><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${alternateCoursewareCourseId}">ECE3060:Introduction to Robotics_L01</a></li></ul></div><h3>2600UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${historicalCoursewareCourseId}">ECE4016:Older Course_L02</a></li></ul></div><h3>No Term Assigned`);
+export const lectureFilePath = '/bbcswebdav/pid-961-dt-content-rid-971_1/xid-971_1';
+export const lectureFileEntryPath = `/webapps/blackboard/execute/content/file?cmd=view&content_id=_961_1&course_id=${coursewareCourseId}`;
+export const tutorialFilePath = '/bbcswebdav/xid-972_1';
+export const unselectedFilePath = '/bbcswebdav/xid-973_1';
+export const assignmentAttachmentPath = '/bbcswebdav/xid-974_1';
+export const lectureBytes = Buffer.concat([Buffer.from('%PDF-1.7\nSynthetic courseware PDF\n'), Buffer.alloc(96 * 1024, 65), Buffer.from('\n%%EOF')]);
+export const tutorialBytes = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.from('Synthetic legacy PPT')]);
+
+/** 为虚构课程提供教师菜单、多层目录、课件及不应暴露的作业附件。 */
+export function coursewarePage(url) {
+  if (`${url.pathname}${url.search}` === alternateCoursewareLanding) {
+    return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${alternateCoursewareCourseId}">Robotics</a></div><ul id="courseMenuPalette_contents"><li><a href="/webapps/blackboard/content/listContent.jsp?course_id=${alternateCoursewareCourseId}&amp;content_id=_963_1">Content</a></li></ul>`;
+  }
+  if (url.searchParams.get('course_id') !== coursewareCourseId) return undefined;
+  /** 拼接虚构课程内可跟随的内容列表链接。 */
+  function folder(contentId) { return `/webapps/blackboard/content/listContent.jsp?course_id=${coursewareCourseId}&amp;content_id=${contentId}`; }
+  if (`${url.pathname}${url.search}` === coursewareLanding) return `<ul id="courseMenuPalette_contents"><li><a href="${folder('_960_1')}">Content</a></li><li><a href="${folder('_962_1')}">Tutorial</a></li><li><a href="/webapps/assessment/example">Tests</a></li></ul>`;
+  if (!url.pathname.endsWith('/listContent.jsp')) return undefined;
+  const contentId = url.searchParams.get('content_id');
+  const listing = {
+    _960_1: `<li><h3><a href="${folder('_961_1')}">Lecture</a></h3></li>`,
+    _961_1: `<li id="contentListItem:_961_1"><h3><a href="${lectureFilePath}" onclick="this.href='${lectureFileEntryPath}'">Week 01</a></h3></li><li><h3><a href="${unselectedFilePath}">Unselected.pdf</a></h3><div class="vtbegenerated"><img src="${unselectedFilePath}" alt=""><iframe src="${unselectedFilePath}"></iframe></div></li><li><img class="item_icon" alt="Assignment"><h3><a href="/webapps/assignment/uploadAssignment">Assignment</a></h3><div class="attachments"><a href="${assignmentAttachmentPath}">Assignment.pdf</a></div></li>`,
+    _962_1: `<li><img class="item_icon" alt="File"><h3><a href="${tutorialFilePath}">Tutorial 01</a></h3></li>`,
+  }[contentId];
+  if (listing === undefined) return undefined;
+  return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${coursewareCourseId}">Example Course</a></div><ul id="content_listContainer">${listing}</ul>`;
+}

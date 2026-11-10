@@ -1,0 +1,113 @@
+/* 文件用途：以侧栏现有主题绘制课程目录、课件选择及下载结果。 */
+.courseware-workspaces {
+  display: flex;
+  gap: 4px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--separator);
+}
+.courseware-workspaces button {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  color: var(--secondary);
+  background: transparent;
+  font-weight: 600;
+  font-size: var(--type-subhead);
+}
+.courseware-workspaces button[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.courseware-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+.courseware-shell[hidden] { display: none; }
+.workspace.courseware-view { padding-block: 14px 18px; }
+.courseware-heading { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.courseware-title {
+  color: var(--text);
+  font-size: 1.25rem;
+  line-height: 1.35;
+  letter-spacing: -.025em;
+  font-weight: 650;
+}
+.courseware-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.courseware-term { margin-top: 18px; }
+.courseware-term > h3 {
+  margin: 0 0 5px;
+  color: var(--secondary);
+  font-size: var(--type-caption);
+  font-weight: 650;
+}
+.courseware-list, .courseware-results ul, .courseware-handoff-list { margin: 0; padding: 0; list-style: none; }
+.courseware-list > li { border-top: 1px solid var(--separator); }
+.courseware-list > li:last-child { border-bottom: 1px solid var(--separator); }
+.courseware-entry, .courseware-file {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  gap: 9px;
+  padding: 7px 3px;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  line-height: 1.5;
+}
+.courseware-entry { justify-content: space-between; border: 0; }
+.courseware-entry svg, .courseware-results svg, .courseware-back svg { width: 14px; height: 14px; color: var(--secondary); }
+.courseware-entry:hover:not(:disabled), .courseware-file:hover { background: var(--surface); }
+.courseware-file { cursor: pointer; }
+.courseware-file input { min-height: 0; width: 17px; height: 17px; flex: 0 0 auto; margin: 0 3px; accent-color: var(--accent); }
+.courseware-file span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.courseware-format { display: block; font-size: var(--type-caption); }
+.courseware-file:has(input:disabled) { cursor: default; }
+.courseware-back { display: flex; flex-wrap: wrap; gap: 0 14px; margin: -8px 0 4px; }
+.courseware-back > button, .courseware-select-all { font-size: var(--type-subhead); }
+.courseware-back svg { transform: rotate(180deg); }
+.courseware-path { margin: 6px 0 14px; color: var(--secondary); font-size: var(--type-caption); line-height: 1.65; }
+.courseware-actions {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 5px;
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--separator);
+  background: var(--background);
+}
+.courseware-actions > .text-button { justify-self: start; font-size: var(--type-subhead); }
+.courseware-actions > p { font-size: var(--type-subhead); font-variant-numeric: tabular-nums; }
+.courseware-save {
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 650;
+}
+.courseware-save:hover:not(:disabled) { background: var(--accent-hover); }
+.courseware-results { margin: 0 0 12px; border-block: 1px solid var(--separator); }
+.courseware-results summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 44px; color: var(--secondary); font-size: var(--type-subhead); }
+.courseware-results[open] svg { transform: rotate(90deg); }
+.courseware-results li, .courseware-handoff-list li { padding: 6px 0; border-top: 1px solid var(--separator); font-size: var(--type-subhead); line-height: 1.6; }
+.courseware-diagnostic pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--type-caption);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.courseware-diagnostic pre:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.courseware-diagnostic .text-button, .courseware-diagnostic-status { font-size: var(--type-subhead); }
+.courseware-diagnostic-status { color: var(--secondary); }
+.courseware-handoff-list { margin: 12px 0; }
+@media (max-height: 600px), (max-width: 260px) {
+  .courseware-shell { flex: 0 0 auto; }
+}

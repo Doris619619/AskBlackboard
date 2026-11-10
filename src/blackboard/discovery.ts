@@ -5,7 +5,7 @@ import { assertReadableDocument, plainText } from './dom';
 import { announcementUrl, normalizeCourseCode, schoolUrl, scopedAnnouncementUrl } from './policy';
 
 /** 读取导航链接或按钮的可见姓名标签；仅解包此标签的根节点，仍忽略其内部输入框和脚本。 */
-function accountName(document: Document): string {
+export function readAccountName(document: Document): string {
   const element = document.querySelector('#global-nav-link, #loggedInUserName, #userName, .user-name');
   if (!element) return '';
   const clone = element.cloneNode(true) as Element;
@@ -46,7 +46,7 @@ export function parseCourseDiscovery(document: Document, pageUrl: string): Cours
   assertReadableDocument(document);
   const module = document.querySelector('#My_Courses_Tools');
   if (!module) throw new AppError('unsupported_page', '没有识别到 Blackboard 学生课程模块，请打开学校首页后重试。');
-  const name = accountName(document);
+  const name = readAccountName(document);
   if (!name) throw new AppError('account_unknown', '没有识别到当前学生姓名，请刷新 Blackboard 首页后重试。');
   const fallbackEntry = firstAnnouncementLink(module, pageUrl) || firstAnnouncementLink(document, pageUrl);
   const courses: Course[] = [];
