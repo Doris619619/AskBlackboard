@@ -117,8 +117,9 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   assert.equal(await content.evaluate(function teacherOrder(element) { return element.parentElement.nextElementSibling?.textContent.includes('Tutorial'); }), true);
   await content.click();
   await panel.getByRole('button', { name: 'Lecture', exact: true }).click();
-  await panel.getByRole('checkbox', { name: 'Week 01.pdf', exact: true }).check();
-  assert.equal(await panel.getByRole('checkbox', { name: 'Week 01', exact: true }).count(), 0);
+  await panel.getByRole('checkbox', { name: 'Week 01', exact: true }).check();
+  assert.equal(await panel.getByRole('checkbox', { name: 'Week 01.pdf', exact: true }).count(), 0);
+  assert.equal(await panel.getByRole('checkbox', { name: 'Unselected.pdf', exact: true }).isVisible(), true);
   assert.equal(await panel.getByText('Assignment.pdf', { exact: true }).count(), 0);
   const readsBeforeBack = state.directoryReads;
   const back = panel.getByRole('button', { name: '返回上一层', exact: true });
@@ -178,10 +179,13 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   passed('cancelled directory picker and expired login send no courseware requests');
 
   await retry.click();
-  await panel.getByRole('status').filter({ hasText: '已保存 1 个文件 · 失败 1 个' }).waitFor();
+  const partial = panel.getByRole('status').filter({ hasText: '已保存 1 个文件 · 失败 1 个' });
+  const rejectedWrapper = results.getByText('学校返回的是网页，未保存为课件。', { exact: true });
+  await partial.or(rejectedWrapper).first().waitFor();
+  assert.ok(await partial.isVisible(), (await rejectedWrapper.allTextContents()).join(' '));
   assert.deepEqual(state.files, [lectureFilePath, tutorialFilePath]);
   assert.deepEqual(state.fileEntries, [lectureFileEntryPath]);
-  passed('courseware downloads use the verified Blackboard click entry and follow a same-origin WebDAV redirect');
+  passed('courseware saves the selected PDF through a 200 HTML file viewer and infers its suffix without filename headers');
   await results.getByText('Week 01 (1).pdf', { exact: false }).waitFor();
   state.failTutorial = false;
   await retry.click();

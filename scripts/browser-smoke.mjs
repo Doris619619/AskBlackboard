@@ -8,7 +8,7 @@ import {
   coursewarePortal, reportAnnouncements, coursewarePage, coursewareCourseId, coursewareLanding,
   forbiddenCoursewareLanding, historicalCoursewareCourseId, historicalCoursewareAlternate,
   alternateCoursewareCourseId, unsupportedCoursewareLanding,
-  unsupportedCoursewareLandingPath, lectureFileEntryPath, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes,
+  unsupportedCoursewareLandingPath, lectureFileEntryPath, lectureFilePath, tutorialFilePath, unselectedFilePath, lectureBytes, tutorialBytes,
 } from '../tests/browser/fixtures.mjs';
 import { runCoursewareSmoke } from './browser-courseware-smoke.mjs';
 import { runCourseDiscoverySmoke } from './browser-discovery-smoke.mjs';
@@ -66,14 +66,14 @@ async function schoolRoute(route) {
   if (address === lectureFileEntryPath) {
     coursewareState.fileEntries.push(address);
     if (!(await request.headerValue('cookie'))?.includes('fixture_courseware_session=active')) return route.fulfill({ status: 401 });
-    return route.fulfill({ status: 302, headers: { location: lectureFilePath } });
+    return route.fulfill({ contentType: 'text/html', body: `<title>Course file</title><iframe src="${lectureFilePath}"></iframe><img src="${unselectedFilePath}" alt=""><script>fetch('${unselectedFilePath}')</script>` });
   }
   if (url.pathname === lectureFilePath || url.pathname === tutorialFilePath) {
     coursewareState.files.push(url.pathname);
     if (url.pathname === lectureFilePath && (!coursewareState.fileEntries.length || !(await request.headerValue('cookie'))?.includes('fixture_courseware_session=active'))) return route.abort();
     if (url.pathname === tutorialFilePath && coursewareState.failTutorial) return route.fulfill({ status: 503, body: 'test-only' });
     return url.pathname === lectureFilePath
-      ? route.fulfill({ contentType: 'application/pdf', headers: { 'Content-Disposition': 'attachment; filename="Week 01.pdf"' }, body: lectureBytes })
+      ? route.fulfill({ contentType: 'application/octet-stream', body: lectureBytes })
       : route.fulfill({ contentType: 'application/vnd.ms-powerpoint', headers: { 'Content-Disposition': 'attachment; filename="Tutorial 01.ppt"' }, body: tutorialBytes });
   }
   const unsafeRedirect = url.pathname === forbiddenCoursewareLanding || url.pathname === unsupportedCoursewareLandingPath;

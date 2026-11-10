@@ -167,6 +167,57 @@ describe('课件文件保存', /** 验证目录、格式、拒绝范围和失败
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['<iframe src="/bbcswebdav/xid-200_1"></iframe><iframe src="https://outside.test/file.pdf"></iframe>', 'text/html', 'https://bb.cuhk.edu.cn/bbcswebdav/xid-200_1'],
+    [`<iframe src="/bbcswebdav/xid-200_1"></iframe><a href="${schoolFile}" download>Download</a>`, 'text/html', schoolFile],
+    [`<title>Error Analysis</title><div id="errorMessage"></div><section style="display: none !important;"><div class="errorMessage">Access Denied</div></section><a href="${schoolFile}" download>Download</a>`, 'text/html', schoolFile],
+    ['<html><script>prepareViewer()</script><iframe src="about:blank"></iframe></html>', 'application/octet-stream', schoolFile],
+  ])('从课件查看页读取选中文件 %#', /** 只跟进同资源链接或原选中地址，保存后缀和原字节。 */ async function savesFileFromView(html, mime, target) {
+    const root = new MemoryDirectory();
+    const item = selection('Lecture 7');
+    item.file.entryUrl = schoolEntry;
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(html, { headers: { 'Content-Type': mime } }))
+      .mockResolvedValueOnce(new Response(pdf, { headers: { 'Content-Type': 'application/octet-stream' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await save(root, item)).toBe('ECE4016/Content/Lecture/Lecture 7.pdf');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([schoolEntry, target]);
+    expect((await (await lecture(root)).getFileHandle('Lecture 7.pdf')).bytes).toEqual([...pdf]);
+  });
+
+  it.each([
+    [`<h1>Sign In</h1><a href="${schoolFile}" download>Download</a>`, 'login_required'],
+    [`<h1>Accept the Terms of Use</h1><a href="${schoolFile}" download>Download</a>`, 'consent_required'],
+    ['<title>Blackboard</title><h1>Access Denied</h1>', 'file_not_available'],
+    [`<div id="errorMessage">Unexpected error occurred.</div><a href="${schoolFile}">Download</a>`, 'file_not_available'],
+    ['<iframe src="/bbcswebdav/xid-201_1"></iframe>', 'file_redirect_blocked'],
+    ['<meta http-equiv="refresh" content="0;url=https://outside.test/file.pdf">', 'file_redirect_blocked'],
+    ['<iframe src="/bbcswebdav/xid-200_1"></iframe><a href="/bbcswebdav/pid-100-dt-content-rid-200_1/alternate.pdf">Alternative</a>', 'file_redirect_blocked'],
+    [`<p>${' '.repeat(128 * 1024)}</p>`, 'file_not_available'],
+  ])('拒绝不安全或超限的查看页 %#', /** 错误页、歧义与非选中文件不发起后续请求。 */ async function rejectsUnsafeView(html, code) {
+    const root = new MemoryDirectory();
+    const item = selection('Lecture 7');
+    item.file.entryUrl = schoolEntry;
+    const fetchMock = mockResponse(new Response(html, { headers: { 'Content-Type': 'text/html' } }));
+    await expect(save(root, item)).rejects.toMatchObject({ code });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([schoolEntry]);
+    expect(root.entries.size).toBe(0);
+  });
+
+  it('查看入口直接返回通用 MIME 文件时保留探测分块', /** 从读取二进制响应中探测类型，保存仍复用原始流。 */ async function preservesBinaryEntryResponse() {
+    const root = new MemoryDirectory();
+    const item = selection('Lecture 7');
+    item.file.entryUrl = schoolEntry;
+    const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      /** 分离探测和正文分块，核对写入端收齐所有原字节。 */
+      start(controller) { controller.enqueue(pdf.subarray(0, 4)); controller.enqueue(pdf.subarray(4)); controller.close(); },
+    });
+    const fetchMock = mockResponse(new Response(body, { headers: { 'Content-Type': 'application/octet-stream' } }));
+    expect(await save(root, item)).toBe('ECE4016/Content/Lecture/Lecture 7.pdf');
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([schoolEntry]);
+    expect((await (await lecture(root)).getFileHandle('Lecture 7.pdf')).bytes).toEqual([...pdf]);
+  });
+
   it('下载响应没有文件名时结合课件目录给出的后缀和实际签名', /** ZIP 文件头无法区分多种 Office 文档，以学校目录的明确文件后缀确认格式。 */ async function savesWithListingHint() {
     const root = new MemoryDirectory();
     const item = selection('Introduction');
