@@ -8,6 +8,8 @@ import { isCourse, isTrustedExtensionSender, type ContentMessage } from '../blac
 import { announcementUrl, BLACKBOARD_ORIGIN, PORTAL_URL, isPortalUrl } from '../blackboard/policy';
 import { assignmentReadUrl, assignmentEntry, CONTENT_PATH } from '../blackboard/assignment-policy';
 import { readCourseAssignments, type AssignmentPage } from '../blackboard/assignments';
+import { coursewarePageUrl } from '../blackboard/courseware-policy';
+import type { CoursewareListing } from '../shared/courseware-types';
 
 const TAB_TIMEOUT_MS = 20000;
 
@@ -181,6 +183,26 @@ async function collectAssignments(tabId: number, course: Course): Promise<Announ
   return fallbackTab(assignmentEntry(course.courseId), readRenderedAssignments);
 }
 
+/** 读取一层课件目录；仅复用用户已打开的同一页面作为渲染备用，不因浏览目录加载其子资源。 */
+async function collectCourseware(tabId: number, course: Course, folderUrl?: string): Promise<CoursewareListing> {
+  const url = coursewarePageUrl(course.courseId, folderUrl);
+  try {
+    return await sendContent<CoursewareListing>(tabId, { type: 'read_courseware', course, folderUrl });
+  } catch (error) {
+    if (!(error instanceof AppError) || !['unsupported_page', 'transport_error', 'courseware_redirect'].includes(error.code)) throw error;
+    const tabs = await chrome.tabs.query({ url: `${url.origin}/*` });
+    for (const tab of tabs) {
+      if (tab.id === undefined || !tab.url) continue;
+      let actual: URL;
+      try { actual = assignmentReadUrl(tab.url, course.courseId); }
+      catch { continue; }
+      if (folderUrl && (actual.pathname !== url.pathname || actual.searchParams.get('content_id') !== url.searchParams.get('content_id'))) continue;
+      return readRendered<CoursewareListing>(tab.id, { type: 'read_courseware_page', course, folderUrl });
+    }
+    throw error;
+  }
+}
+
 /** 验证来源属于课程公告或作业列表后打开原文，再让内容脚本定位该公告和引用段落。 */
 async function openSource(source: SourceEvidence, quote?: string): Promise<void> {
   if (!source || typeof source.url !== 'string' || typeof source.courseId !== 'string' || typeof source.sourceId !== 'string' || source.sourceId.length > 256 || (quote !== undefined && (typeof quote !== 'string' || quote.length > 10000))) throw new AppError('invalid_source', '来源信息无效，请重新查询。');
@@ -196,7 +218,7 @@ async function openSource(source: SourceEvidence, quote?: string): Promise<void>
   await sendContent(tab.id, { type: 'highlight_source', sourceId: source.sourceId, quote });
 }
 
-/** 执行侧栏允许的查询或来源回跳；内部内容读取动作不能从网页入口触发。 */
+/** 执行侧栏查询、下载前的课程校验或来源回跳；网页无法触发内部动作。 */
 async function handleMessage(raw: unknown): Promise<unknown> {
   if (!raw || typeof raw !== 'object' || typeof (raw as { type?: unknown }).type !== 'string') throw new AppError('invalid_message', '扩展请求无效，请重新打开侧栏。');
   const message = raw as ExtensionMessage;
@@ -212,6 +234,15 @@ async function handleMessage(raw: unknown): Promise<unknown> {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
       const tabId = await blackboardTab();
       return collectAssignments(tabId, await currentCourse(tabId, message.course));
+    }
+    case 'collect_courseware':
+    case 'validate_courseware_download': {
+      if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
+      const tabId = await blackboardTab();
+      const course = await currentCourse(tabId, message.course);
+      if (message.type === 'validate_courseware_download') return undefined;
+      if (message.folderUrl !== undefined && typeof message.folderUrl !== 'string') throw new AppError('unsafe_url', '课件目录地址无效。');
+      return collectCourseware(tabId, course, message.folderUrl);
     }
     case 'open_source': return openSource(message.source, message.quote);
     default: throw new AppError('invalid_message', '该操作不属于侧栏支持的只读查询。');

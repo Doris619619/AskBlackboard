@@ -27,3 +27,29 @@ export function completion(answer) { return { choices: [{ finish_reason: 'stop',
 export function assignmentRoot(courseId) { return `<ul id="courseMenuPalette_contents"><li><a href="/webapps/blackboard/content/listContent.jsp?course_id=${courseId}&content_id=_900_1">Assignments</a></li></ul>`; }
 /** 作业提交链接仅用于辨认类型，浏览器验收会断言该地址从未被访问。 */
 export function assignmentListing(courseId) { return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${courseId}">Example</a></div><h1 id="pageTitleHeader">Assignments</h1><ul id="content_listContainer"><li id="contentListItem:_910_1"><img class="item_icon" alt="Assignment"><div class="item" id="_910_1"><h3><a href="/webapps/assignment/uploadAssignment?course_id=${courseId}&content_id=_910_1">Assignment1</a></h3></div><div class="vtbegenerated"><p>The deadline is 21:30, 22 Nov 2026.</p></div></li></ul>`; }
+
+export const coursewareCourseId = '_704_1';
+export const coursewarePortal = reportPortal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${coursewareCourseId}">ECE4016 L01 Example Course</a></li></ul></div><h3>2600UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=_705_1">ECE4016 L02 Older Course</a></li></ul></div><h3>No Term Assigned`);
+export const lectureFilePath = '/bbcswebdav/pid-961-dt-content-rid-971_1/xid-971_1';
+export const tutorialFilePath = '/bbcswebdav/xid-972_1';
+export const unselectedFilePath = '/bbcswebdav/xid-973_1';
+export const assignmentAttachmentPath = '/bbcswebdav/xid-974_1';
+export const lectureBytes = Buffer.from('%PDF-1.7\nSynthetic courseware PDF\n%%EOF');
+export const tutorialBytes = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.from('Synthetic legacy PPT')]);
+
+/** 为同一虚构课程提供教师菜单、多层目录、课件及不应暴露的作业附件。 */
+export function coursewarePage(url) {
+  if (url.searchParams.get('course_id') !== coursewareCourseId) return undefined;
+  /** 拼接虚构课程内可跟随的内容列表链接。 */
+  function folder(contentId) { return `/webapps/blackboard/content/listContent.jsp?course_id=${coursewareCourseId}&amp;content_id=${contentId}`; }
+  if (url.pathname.endsWith('/courseMain')) return `<ul id="courseMenuPalette_contents"><li><a href="${folder('_960_1')}">Content</a></li><li><a href="${folder('_962_1')}">Tutorial</a></li><li><a href="/webapps/assessment/example">Tests</a></li></ul>`;
+  if (!url.pathname.endsWith('/listContent.jsp')) return undefined;
+  const contentId = url.searchParams.get('content_id');
+  const listing = {
+    _960_1: `<li><h3><a href="${folder('_961_1')}">Lecture</a></h3></li>`,
+    _961_1: `<li><h3><a href="${lectureFilePath}">Week 01.pdf</a></h3></li><li><h3><a href="${unselectedFilePath}">Unselected.pdf</a></h3><div class="vtbegenerated"><img src="${unselectedFilePath}" alt=""><iframe src="${unselectedFilePath}"></iframe></div></li><li><img class="item_icon" alt="Assignment"><h3><a href="/webapps/assignment/uploadAssignment">Assignment</a></h3><div class="attachments"><a href="${assignmentAttachmentPath}">Assignment.pdf</a></div></li>`,
+    _962_1: `<li><h3><a href="${tutorialFilePath}">Tutorial 01.ppt</a></h3></li>`,
+  }[contentId];
+  if (listing === undefined) return undefined;
+  return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${coursewareCourseId}">Example Course</a></div><ul id="content_listContainer">${listing}</ul>`;
+}

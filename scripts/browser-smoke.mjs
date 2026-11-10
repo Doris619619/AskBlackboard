@@ -1,10 +1,11 @@
-/** 文件用途：在隔离浏览器加载实际 dist 扩展，使用虚构网络验证采集、问答、回跳与恢复；不代表真实学校/模型验收。 */
+/** 文件用途：在隔离浏览器加载实际扩展，用虚构网络验证采集、问答、回跳、恢复与课件保存。 */
 import { chromium } from 'playwright';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl, assignmentRoot, assignmentListing } from '../tests/browser/fixtures.mjs';
-import { reportPortal, reportAnnouncements } from '../tests/browser/fixtures.mjs';
+import { coursewarePortal, reportAnnouncements, coursewarePage, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes } from '../tests/browser/fixtures.mjs';
+import { runCoursewareSmoke } from './browser-courseware-smoke.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
 await mkdir(output, { recursive: true });
@@ -26,6 +27,7 @@ let announcementReads = 0;
 let modelCalls = 0;
 let unsafeRequests = 0;
 let assignmentReads = 0;
+const coursewareState = { files: [], failDirectory: true, failTutorial: true, loginExpired: false };
 let releasePending;
 const checks = [];
 const pageErrors = [];
@@ -34,12 +36,24 @@ let panel;
 /** 记录已完成且有断言支持的用例，失败立即中止，避免生成假的全绿报告。 */
 function passed(name) { checks.push(name); console.log(`PASS ${name}`); }
 
-/** 所有学校请求只返回虚构门户/公告，不连接学校，也不读取个人登录状态。 */
+/** 所有学校请求返回虚构资料和课件，不连接学校或读取个人登录状态。 */
 async function schoolRoute(route) {
   const url = new URL(route.request().url());
+  if (url.pathname === lectureFilePath || url.pathname === tutorialFilePath) {
+    coursewareState.files.push(url.pathname);
+    if (url.pathname === tutorialFilePath && coursewareState.failTutorial) return route.fulfill({ status: 503, body: 'test-only' });
+    return url.pathname === lectureFilePath
+      ? route.fulfill({ contentType: 'application/pdf', headers: { 'Content-Disposition': 'attachment; filename="Week 01.pdf"' }, body: lectureBytes })
+      : route.fulfill({ contentType: 'application/vnd.ms-powerpoint', headers: { 'Content-Disposition': 'attachment; filename="Tutorial 01.ppt"' }, body: tutorialBytes });
+  }
   if (/uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
-  if (!loggedIn) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
-  if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: reportPortal });
+  if (!loggedIn || coursewareState.loginExpired) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
+  if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: coursewarePortal });
+  const materials = coursewarePage(url);
+  if (materials !== undefined) {
+    if (coursewareState.failDirectory && url.searchParams.get('content_id') === '_962_1') return route.fulfill({ status: 503, body: 'test-only' });
+    return route.fulfill({ contentType: 'text/html', body: materials });
+  }
   if (url.pathname.endsWith('/courseMain')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentRoot(url.searchParams.get('course_id')) }); }
   if (url.pathname.endsWith('/listContent.jsp')) { assignmentReads += 1; return route.fulfill({ contentType: 'text/html', body: assignmentListing(url.searchParams.get('course_id')) }); }
   if (url.pathname.endsWith('/announcement')) {
@@ -298,6 +312,7 @@ try {
     assert.equal(await panel.locator('.conversation-turn').count(), beforeRejected.turns);
   }
   passed('ambiguous and unknown course requests preserve draft without collection or model calls');
+  await runCoursewareSmoke(panel, coursewareState, output, passed);
   assert.deepEqual(pageErrors, []);
   assert.equal(unsafeRequests, 0);
   await writeFile(path.join(output, 'report.json'), JSON.stringify({ status: 'passed', kind: 'real-extension-synthetic-network', browser: context.browser()?.version(), checks, announcementReads, modelCalls }, null, 2));

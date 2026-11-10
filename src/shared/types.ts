@@ -52,6 +52,8 @@ export type ExtensionMessage =
   | { type: 'discover_courses' }
   | { type: 'collect_announcements'; course: Course }
   | { type: 'collect_assignments'; course: Course }
+  | { type: 'collect_courseware'; course: Course; folderUrl?: string }
+  | { type: 'validate_courseware_download'; course: Course }
   | { type: 'read_assignments'; course: Course }
   | { type: 'open_source'; source: SourceEvidence; quote?: string }
   | { type: 'ping' }

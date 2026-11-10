@@ -1,7 +1,8 @@
-/** 文件用途：供侧栏调用后台只读采集和来源回跳，不向页面传递模型密钥。 */
+/** 文件用途：供侧栏调用后台只读采集、课件下载前的课程校验和来源回跳。 */
 import { AppError } from './errors';
 import { RUNTIME_PROTOCOL, RELOAD_REQUIRED_MESSAGE } from './runtime-version';
 import type { AnnouncementSnapshot, Course, CourseDiscovery, ExtensionMessage, RuntimeResult, SourceEvidence } from './types';
+import type { CoursewareFolder, CoursewareListing } from './courseware-types';
 
 /** 发送一个受约束的扩展消息并将后台失败转换成业务错误。 */
 async function request<T>(message: ExtensionMessage): Promise<T> {
@@ -24,5 +25,13 @@ export function discoverCourses(): Promise<CourseDiscovery> { return request({ t
 export function collectAnnouncements(course: Course): Promise<AnnouncementSnapshot> { return request({ type: 'collect_announcements', course }); }
 /** 读取指定课程的只读内容列表与作业说明，不访问提交入口。 */
 export function collectAssignments(course: Course): Promise<AnnouncementSnapshot> { return request({ type: 'collect_assignments', course }); }
+/** 读取一层课件目录；未指定文件夹时只读取课程左侧菜单。 */
+export function collectCourseware(course: Course, folder?: CoursewareFolder): Promise<CoursewareListing> {
+  return request({ type: 'collect_courseware', course, folderUrl: folder?.url });
+}
+/** 在请求已勾选文件前确认账号仍能访问该课程。 */
+export function validateCoursewareDownload(course: Course): Promise<void> {
+  return request({ type: 'validate_courseware_download', course });
+}
 /** 在 Blackboard 打开保存的来源并定位引用段落。 */
 export function openSource(source: SourceEvidence, quote?: string): Promise<void> { return request({ type: 'open_source', source, quote }); }

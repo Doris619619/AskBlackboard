@@ -36,7 +36,7 @@ try {
   await oldWorker.evaluate(async function seed() { await chrome.storage.local.set({ upgradeFixture: 'preserved' }); });
   const school = context.pages()[0]; await school.goto(portalUrl);
   const panel = await context.newPage(); await panel.goto(`chrome-extension://${id}/sidepanel.html`);
-  await panel.getByText('插件界面与后台版本不一致', { exact: false }).waitFor();
+  await panel.getByRole('region', { name: '课程和连接状态' }).getByRole('alert').filter({ hasText: '插件界面与后台版本不一致' }).waitFor();
   const reload = panel.getByRole('button', { name: '重新加载插件', exact: true });
   await reload.waitFor();
   assert.equal(await panel.getByText('该操作不属于侧栏支持的只读查询。', { exact: true }).count(), 0);
