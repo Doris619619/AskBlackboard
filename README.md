@@ -40,6 +40,8 @@
 
 课件按 Blackboard 当前可见的目录和顺序列出，支持 PDF、PPT、PPTX 和可识别的其他同源文件。此功能无需 DeepSeek 密钥。若浏览器不允许在侧栏选目录，可在扩展独立页继续。课件页只保存原文件，PDF 或 PPT 正文须用本机软件打开。
 
+重载扩展后，原来的 Blackboard 标签页如果还没连上，课件页会自动借用临时门户页完成读取。
+
 ## 数据与权限
 
 扩展申请 `storage`、`sidePanel`、`webRequest` 及 Blackboard、DeepSeek 两个域名。课件读取用 `webRequest` 观察本次目录请求的跳转地址，以便核对课程后继续读取。学校密码与 Cookie 留在浏览器。密钥存于扩展受信的 `chrome.storage.local`，不发给学校页面、不随安装包分发。
@@ -75,7 +77,7 @@ $env:BB_BROWSER_EXECUTABLE = 'C:/Program Files (x86)/Microsoft/Edge/Application/
 npm run test:browser
 ```
 
-`node scripts/runtime-upgrade-smoke.mjs` 使用隔离配置模拟旧后台配新界面，再点击真正的扩展重新加载按钮，验证配置保留及作业查询恢复；学校与模型依然使用虚构网络。
+`node scripts/runtime-upgrade-smoke.mjs` 使用隔离配置模拟旧后台配新界面，再点击真正的扩展重新加载按钮，验证配置保留、旧 Blackboard 标签页断开时自动恢复课件读取，以及作业查询恢复。学校与模型使用虚构网络。
 
 测试使用独立 `.local/browser-smoke-*` 配置，不继承日常浏览器凭据；启用离线网络并由测试路由返回虚构资料。报告和截图位于 `artifacts/browser-smoke/`。学校、真实模型和真正侧栏的最新验收结果见 [验收记录](docs/验收记录.md#2026-10-14-edge-真实验收)。
 

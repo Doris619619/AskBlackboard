@@ -108,22 +108,41 @@ async function readRendered<T>(tabId: number, message: ContentMessage): Promise<
   throw new AppError('unsupported_page', 'Blackboard 页面没有完成数据加载。');
 }
 
-/** 每次刷新课程目录，防止切换账号或学期后继续使用旧课程映射。 */
-async function discover(tabId: number): Promise<CourseDiscovery> {
-  try { return await sendContent<CourseDiscovery>(tabId, { type: 'read_discovery' }); } catch (error) {
+/** 用同一张可用标签页校验课程并完成操作，临时门户保留到操作结束。 */
+async function withDiscoveryTab<T>(tabId: number, operation: (id: number, discovery: CourseDiscovery) => T | Promise<T>): Promise<T> {
+  /** 从临时门户读取当前账号，并在关闭页面前完成本轮操作。 */
+  async function readPortal(id: number): Promise<T> {
+    const discovery = await readRendered<CourseDiscovery>(id, { type: 'read_discovery_page' });
+    return operation(id, discovery);
+  }
+  let discovery: CourseDiscovery;
+  try { discovery = await sendContent<CourseDiscovery>(tabId, { type: 'read_discovery' }); } catch (error) {
     if (requiresUserAction(error)) throw error;
-    /** 在已加载的专用门户 DOM 中提取课程与账号，无额外登录手段。 */
-    async function readPortal(id: number): Promise<CourseDiscovery> { return readRendered(id, { type: 'read_discovery_page' }); }
+    return fallbackTab(PORTAL_URL, readPortal);
+  }
+  try { return await operation(tabId, discovery); } catch (error) {
+    if (!(error instanceof AppError) || !['content_unavailable', 'tab_closed'].includes(error.code)) throw error;
     return fallbackTab(PORTAL_URL, readPortal);
   }
 }
 
-/** 对照刚读取的课程目录，验证请求来自当前学生实际可见的学期和教学班。 */
-async function currentCourse(tabId: number, requested: Course): Promise<Course> {
-  announcementUrl(requested.announcementUrl, requested.courseId);
-  const discovery = await discover(tabId);
+/** 每次刷新课程目录，防止切换账号或学期后继续使用旧课程映射。 */
+function discover(tabId: number): Promise<CourseDiscovery> {
+  /** 列课程时只返回发现结果，不在标签页执行额外操作。 */
+  function discovered(_id: number, discovery: CourseDiscovery): CourseDiscovery { return discovery; }
+  return withDiscoveryTab(tabId, discovered);
+}
+
+/** 从刚读取的目录确认请求课程仍属于当前学生可见的学期和教学班。 */
+function requireCurrentCourse(discovery: CourseDiscovery, requested: Course): Course {
   for (const course of discovery.courses) if (course.courseId === requested.courseId && course.termId === requested.termId && course.code === requested.code && course.section === requested.section) return course;
   throw new AppError('course_changed', '当前账号、学期或课程列表已变化，请重新选择课程。');
+}
+
+/** 读取当前课程目录并确认该课程仍可访问，供独立校验和已有查询入口复用。 */
+async function currentCourse(tabId: number, requested: Course): Promise<Course> {
+  announcementUrl(requested.announcementUrl, requested.courseId);
+  return requireCurrentCourse(await discover(tabId), requested);
 }
 
 /** 用本轮专用标签页逐页读取渲染后的公告；不会改动学生已经打开的页面。 */
@@ -240,14 +259,21 @@ async function handleMessage(raw: unknown): Promise<unknown> {
       const tabId = await blackboardTab();
       return collectAssignments(tabId, await currentCourse(tabId, message.course));
     }
-    case 'collect_courseware':
+    case 'collect_courseware': {
+      if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
+      if (message.folderUrl !== undefined && typeof message.folderUrl !== 'string') throw new AppError('unsafe_url', '课件目录地址无效。');
+      const { course: requested, folderUrl } = message;
+      announcementUrl(requested.announcementUrl, requested.courseId);
+      /** 由提供课程目录的同一标签页读取课件，页面断开时由外层恢复。 */
+      function readFromTab(id: number, discovery: CourseDiscovery): Promise<CoursewareListing> {
+        return collectCourseware(id, requireCurrentCourse(discovery, requested), folderUrl);
+      }
+      return withDiscoveryTab(await blackboardTab(), readFromTab);
+    }
     case 'validate_courseware_download': {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
-      const tabId = await blackboardTab();
-      const course = await currentCourse(tabId, message.course);
-      if (message.type === 'validate_courseware_download') return undefined;
-      if (message.folderUrl !== undefined && typeof message.folderUrl !== 'string') throw new AppError('unsafe_url', '课件目录地址无效。');
-      return collectCourseware(tabId, course, message.folderUrl);
+      await currentCourse(await blackboardTab(), message.course);
+      return undefined;
     }
     case 'open_source': return openSource(message.source, message.quote);
     default: throw new AppError('invalid_message', '该操作不属于侧栏支持的只读查询。');
