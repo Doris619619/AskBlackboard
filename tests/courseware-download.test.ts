@@ -95,7 +95,7 @@ function mockResponse(response: Response) {
   return fetchMock;
 }
 
-afterEach(/** 复原测试中替换的网络接口。 */ function restoreNetwork() { vi.unstubAllGlobals(); });
+afterEach(/** 复原测试中替换的网络接口和计时器。 */ function restoreNetwork() { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('课件文件保存', /** 验证目录、格式、拒绝范围和失败清理。 */ function coursewareDownloadCases() {
   it('保留课程和目录层级、UTF-8 文件名及原始 PDF 字节', /** 模拟 XID 响应和用户选中的本地目录。 */ async function savesPdf() {
@@ -195,5 +195,70 @@ describe('课件文件保存', /** 验证目录、格式、拒绝范围和失败
     mockResponse(new Response(body, { headers: { 'Content-Type': 'application/pdf' } }));
     await expect(save(root)).rejects.toMatchObject({ code: 'file_download_failed' });
     expect((await lecture(root)).entries.size).toBe(0);
+  });
+
+  it('等待响应头超时会中止请求，且不会创建本地文件', /** 用假时钟控制一直不响应的学校请求。 */ async function timesOutWaitingForHeaders() {
+    vi.useFakeTimers();
+    const root = new MemoryDirectory();
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(/** 保持请求挂起直到下载器发出取消信号。 */ function stalledFetch(_url, init) {
+      return new Promise(/** 模拟浏览器收到中止信号后结束请求。 */ function waitForAbort(_resolve, reject) {
+        init?.signal?.addEventListener('abort', /** 以标准中止错误结束网络等待。 */ function aborted() { reject(new DOMException('aborted', 'AbortError')); }, { once: true });
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const saving = save(root);
+    const failure = expect(saving).rejects.toMatchObject({ code: 'file_download_failed', message: expect.stringContaining('超时') });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await failure;
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(root.entries.size).toBe(0);
+  });
+
+  it('等待后续数据超时会取消流并清理未写完的文件', /** 首段合法但后续没有任何数据，批量保存仍可继续。 */ async function timesOutWaitingForBody() {
+    vi.useFakeTimers();
+    const root = new MemoryDirectory();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      /** 发出足够的文件头，使保存进入磁盘写入，然后保持网络停滞。 */
+      start(controller) {
+        const first = new Uint8Array(4096);
+        first.set(pdf);
+        controller.enqueue(first);
+      },
+      /** 记录下载器释放了挂起的响应流。 */
+      cancel() { cancelled = true; },
+    });
+    mockResponse(new Response(body, { headers: { 'Content-Type': 'application/pdf' } }));
+    const saving = save(root);
+    const failure = expect(saving).rejects.toMatchObject({ code: 'file_download_failed', message: expect.stringContaining('超时') });
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await lecture(root)).entries.size).toBe(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await failure;
+    expect(cancelled).toBe(true);
+    expect((await lecture(root)).entries.size).toBe(0);
+  });
+
+  it('只要分块持续到达，总下载时间超过超时门槛也能完成', /** 每个分块均在等待期限内到达，但整份文件传输更久。 */ async function allowsSteadilyProgressingTransfer() {
+    vi.useFakeTimers();
+    const root = new MemoryDirectory();
+    const first = new Uint8Array(4096);
+    first.set(pdf);
+    const middle = Uint8Array.of(1, 2);
+    const last = Uint8Array.of(3, 4);
+    const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      /** 以固定间隔发出虚构数据，模拟慢速但持续的网络。 */
+      start(controller) {
+        setTimeout(/** 先交付文件头。 */ function firstChunk() { controller.enqueue(first); }, 20_000);
+        setTimeout(/** 继续传输正文分块。 */ function middleChunk() { controller.enqueue(middle); }, 40_000);
+        setTimeout(/** 交付最后分块并结束响应。 */ function lastChunk() { controller.enqueue(last); controller.close(); }, 60_000);
+      },
+    });
+    mockResponse(new Response(body, { headers: { 'Content-Type': 'application/pdf' } }));
+    const saving = save(root);
+    const success = expect(saving).resolves.toBe('ECE4016/Content/Lecture/Week 01.pdf');
+    await vi.advanceTimersByTimeAsync(60_000);
+    await success;
+    expect((await (await lecture(root)).getFileHandle('Week 01.pdf')).bytes).toEqual([...first, ...middle, ...last]);
   });
 });

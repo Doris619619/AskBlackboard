@@ -32,6 +32,7 @@ const genericTypes = new Set(['', 'application/octet-stream', 'binary/octet-stre
 const zipExtensions = new Set(['zip', 'docx', 'pptx', 'xlsx', 'odt', 'ods', 'odp']);
 const oleExtensions = new Set(['doc', 'ppt', 'xls']);
 const headerBytes = 4096;
+const networkIdleMs = 30_000;
 
 /** 把名称限制成一个 Windows 路径段，保留常用 Unicode 字符并为后缀留出长度。 */
 function pathPart(value: string, fallback: string): string {
@@ -108,19 +109,36 @@ function validatedName(response: Response, url: URL, label: string, prefix: Uint
   return `${pathPart(stem, '课件')}.${suffix}`;
 }
 
-/** 读取网络流的一个分块，保留取消状态并避免转发底层网络错误内容。 */
-async function readChunk(reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>, signal?: AbortSignal) {
-  try { signal?.throwIfAborted(); return await reader.read(); }
-  catch { signal?.throwIfAborted(); throw new AppError('file_download_failed', '课件传输中断，请重试。'); }
+/** 仅限制本次网络等待。计时到期时中止该文件的请求，并解除等待中的读取。 */
+async function waitForNetwork<T>(pending: Promise<T>, request: AbortController): Promise<T> {
+  const { signal } = request;
+  let interrupt!: () => void;
+  const interrupted = new Promise<never>(/** 收到超时或用户取消时结束当前等待。 */ function onInterrupted(_resolve, reject) {
+    /** 保留取消方提供的原因，使批次区分用户取消和单文件超时。 */
+    interrupt = function rejectAbort() { reject(signal.reason); };
+    signal.addEventListener('abort', interrupt, { once: true });
+    if (signal.aborted) interrupt();
+  });
+  /** 一次停滞只中止当前文件，让同一批中其他文件继续保存。 */
+  function timeOut() { request.abort(new AppError('file_download_failed', '等待课件数据超时，请重试。')); }
+  const timer = setTimeout(timeOut, networkIdleMs);
+  try { return await Promise.race([pending, interrupted]); }
+  finally { clearTimeout(timer); signal.removeEventListener('abort', interrupt); }
+}
+
+/** 读取网络流的一个分块，保留超时和取消状态，并屏蔽底层网络错误。 */
+async function readChunk(reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>, request: AbortController) {
+  try { request.signal.throwIfAborted(); return await waitForNetwork(reader.read(), request); }
+  catch { request.signal.throwIfAborted(); throw new AppError('file_download_failed', '课件传输中断，请重试。'); }
 }
 
 /** 最多检查固定长度的文件头，并保存已经取出的分块供后续原样写入。 */
-async function readHeader(reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>, signal?: AbortSignal) {
+async function readHeader(reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>, request: AbortController) {
   const prefix = new Uint8Array(headerBytes);
   const buffered: Uint8Array<ArrayBuffer>[] = [];
   let length = 0;
   while (length < prefix.length) {
-    const { done, value } = await readChunk(reader, signal);
+    const { done, value } = await readChunk(reader, request);
     if (done) break;
     buffered.push(value);
     const head = value.subarray(0, prefix.length - length);
@@ -141,61 +159,73 @@ async function unusedName(directory: FileSystemDirectoryHandle, filename: string
 }
 
 /** 写入经过检查的完整流。中断只清理本次创建且仍为空的文件。 */
-async function writeCourseware(root: FileSystemDirectoryHandle, path: string[], filename: string, reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>, buffered: Uint8Array<ArrayBuffer>[], signal?: AbortSignal): Promise<string> {
+async function writeCourseware(root: FileSystemDirectoryHandle, path: string[], filename: string, reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>, buffered: Uint8Array<ArrayBuffer>[], request: AbortController): Promise<string> {
+  const { signal } = request;
   let directory = root;
   let file: FileSystemFileHandle | undefined;
   let stream: FileSystemWritableFileStream | undefined;
   let name = filename;
   try {
     for (const part of path) {
-      signal?.throwIfAborted();
+      signal.throwIfAborted();
       directory = await directory.getDirectoryHandle(part, { create: true });
     }
     name = await unusedName(directory, filename);
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
     const candidate = await directory.getFileHandle(name, { create: true });
     if ((await candidate.getFile()).size) throw new AppError('file_write_failed', '文件名刚被占用，请重试保存。');
     file = candidate;
     stream = await file.createWritable();
     for (const chunk of buffered) {
-      signal?.throwIfAborted();
+      signal.throwIfAborted();
       await stream.write(chunk);
     }
     while (true) {
-      const { done, value } = await readChunk(reader, signal);
+      const { done, value } = await readChunk(reader, request);
       if (done) break;
       await stream.write(value);
     }
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
     await stream.close();
     return [...path, name].join('/');
   } catch (error) {
     try { await stream?.abort(); } catch { /* 写入流可能已自行关闭。 */ }
     try { if (file && !(await file.getFile()).size) await directory.removeEntry(name); } catch { /* 权限变化时保留原错误。 */ }
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
     if (error instanceof AppError) throw error;
     throw new AppError('file_write_failed', '无法写入所选目录，请检查目录权限或磁盘空间。');
   }
 }
 
-/** 使用浏览器登录态读取一个已选课件，只将原文件字节写到明确选择的目录。 */
+/** 使用浏览器登录态读取一个已选课件，分别限制响应头和分块的空闲等待。 */
 export async function saveCoursewareFile(root: FileSystemDirectoryHandle, courseCode: string, selection: CoursewareSelection, signal?: AbortSignal): Promise<string> {
   const url = coursewareFileUrl(selection.file.url);
-  let response: Response;
-  try { signal?.throwIfAborted(); response = await fetch(url.href, { method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'error', signal }); }
-  catch { signal?.throwIfAborted(); throw new AppError('file_download_failed', '无法下载此课件，请确认 Blackboard 登录状态后重试。'); }
-  const reader = response.body?.getReader();
+  signal?.throwIfAborted();
+  const request = new AbortController();
+  /** 将用户取消传给当前文件的请求。单文件超时由自身控制器处理。 */
+  function cancel() { request.abort(signal?.reason); }
+  signal?.addEventListener('abort', cancel, { once: true });
+  let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
   try {
+    let response: Response;
+    try {
+      response = await waitForNetwork(fetch(url.href, { method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'error', signal: request.signal }), request);
+    } catch {
+      request.signal.throwIfAborted();
+      throw new AppError('file_download_failed', '无法下载此课件，请确认 Blackboard 登录状态后重试。');
+    }
+    reader = response.body?.getReader();
     if (response.status === 401) throw new AppError('login_required', '请在 Blackboard 页面重新登录后再下载。');
     if (response.status === 403) throw new AppError('file_not_available', '当前账号没有这份课件的访问权限。');
     if (response.status !== 200 || response.redirected || (response.url && response.url !== url.href) || !reader) throw new AppError('file_not_available', '学校没有返回可保存的课件文件。');
-    const { prefix, buffered } = await readHeader(reader, signal);
+    const { prefix, buffered } = await readHeader(reader, request);
     const filename = validatedName(response, url, selection.file.name, prefix);
     const path = [pathPart(courseCode, '课程'), ...selection.folders.map(/** 保留老师设置的栏目层级，并逐段清理目录名称。 */ function folderPart(folder) { return pathPart(folder.name, '文件夹'); })];
     /** 在扩展页面间串行分配本地文件名，防止两个批次覆盖彼此的文件。 */
-    async function write(): Promise<string> { return writeCourseware(root, path, filename, reader!, buffered, signal); }
-    return await (navigator.locks ? navigator.locks.request('askblackboard-courseware-write', { signal }, write) : write());
+    async function write(): Promise<string> { return writeCourseware(root, path, filename, reader!, buffered, request); }
+    return await (navigator.locks ? navigator.locks.request('askblackboard-courseware-write', { signal: request.signal }, write) : write());
   } finally {
+    signal?.removeEventListener('abort', cancel);
     try { await reader?.cancel(); } catch { /* 网络断开时读取流已关闭。 */ }
   }
 }

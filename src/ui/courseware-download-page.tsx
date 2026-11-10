@@ -20,17 +20,23 @@ function visiblePath(selection: CoursewareSelection): string {
 /** 在文件列表上方保留每项的落盘路径或安全的失败说明。 */
 export function CoursewareDownloadResults({ report }: { report: CoursewareReport | null }) {
   if (!report?.results.length) return null;
+  return <CoursewareResultDetails report={report} />;
+}
+
+/** 批量保存时更新摘要，详情展开后才绘制逐文件结果。 */
+function CoursewareResultDetails({ report }: { report: CoursewareReport }) {
+  const [expanded, setExpanded] = useState(false);
   const { saved, failed } = summarize(report);
-  return <details className="courseware-results" open={failed > 0}>
+  return <details className="courseware-results" open={failed > 0} onToggle={/** 与用户展开和失败项自动展开同步。 */ function toggle(event) { setExpanded(event.currentTarget.open); }}>
     <summary>下载结果 · 已保存 {saved} 个{failed ? ` · 失败 ${failed} 个` : ''}<Icon name="chevron" /></summary>
-    <ul>
+    {expanded && <ul>
       {report.results.map(/** 同名课件用来源目录区分，成功项直接显示实际落盘路径。 */ function renderResult(result) {
         return <li key={coursewareSelectionKey(result.selection)}>
           <span>{result.path ?? visiblePath(result.selection)}</span>
           {result.error && <p className="inline-error">{result.error}</p>}
         </li>;
       })}
-    </ul>
+    </ul>}
   </details>;
 }
 

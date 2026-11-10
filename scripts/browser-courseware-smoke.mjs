@@ -182,6 +182,12 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   assert.deepEqual(state.files, [lectureFilePath, tutorialFilePath, tutorialFilePath]);
   assert.equal(await panel.evaluate(function pickerCallCount() { return window.coursewarePickerCalls; }), 2);
   await panel.getByRole('checkbox', { name: 'Tutorial 01.ppt', exact: true }).waitFor();
+  await results.locator('ul').waitFor({ state: 'detached' });
+  await results.locator('summary').click();
+  await results.getByText('Week 01 (1).pdf', { exact: false }).waitFor();
+  await results.locator('summary').click();
+  await results.locator('ul').waitFor({ state: 'detached' });
+  passed('courseware keeps only the batch summary mounted until the saved file details are expanded');
   passed('courseware shows known filename suffixes immediately and confirms an opaque XID after saving');
   await panel.screenshot({ path: path.join(output, 'courseware-saved.png') });
   passed('courseware batch saves original bytes in teacher folders, preserves existing file and retries only failed file');
