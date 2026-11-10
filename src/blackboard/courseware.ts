@@ -3,7 +3,7 @@ import { AppError } from '../shared/errors';
 import type { CoursewareFile, CoursewareFolder, CoursewareListing } from '../shared/courseware-types';
 import type { Course } from '../shared/types';
 import { assignmentReadUrl, CONTENT_PATH, COURSE_PATH } from './assignment-policy';
-import { COURSEWARE_REDIRECT_MESSAGE, coursewareFileExtension, coursewareFileUrl, coursewarePageUrl } from './courseware-policy';
+import { COURSEWARE_REDIRECT_MESSAGE, coursewareFileEntryUrl, coursewareFileExtension, coursewareFileUrl, coursewarePageUrl } from './courseware-policy';
 import { assertReadableDocument, parseHtml, plainText } from './dom';
 
 export { coursewarePageUrl } from './courseware-policy';
@@ -40,8 +40,18 @@ function folderLink(link: Element, page: URL, course: Course): CoursewareFolder 
   } catch { return undefined; }
 }
 
-/** 保留课件标题并从页面提供的文件名提取后缀，XID 和通用图标不表示格式。 */
-function fileLink(link: Element, page: URL): CoursewareFile | undefined {
+/** 仅读取 Blackboard 为文件标题设置的字面量点击地址，不执行页面脚本。 */
+function fileEntry(link: Element, page: URL, file: URL, course: Course, row: Element): string | undefined {
+  const address = /^\s*this\.href\s*=\s*(['"])([^'"\\]+)\1\s*;?\s*$/.exec(link.getAttribute('onclick') ?? '')?.[2];
+  if (!address) return undefined;
+  try {
+    const entry = coursewareFileEntryUrl(address, file, course.courseId, page.href);
+    return row.id === `contentListItem:${entry.searchParams.get('content_id')}` ? entry.href : undefined;
+  } catch { return undefined; }
+}
+
+/** 保留课件标题和页面格式提示，文件标题可附带经核对的 Blackboard 点击入口。 */
+function fileLink(link: Element, page: URL, context?: { course: Course; row: Element }): CoursewareFile | undefined {
   const href = link.getAttribute('href');
   if (!href) return undefined;
   try {
@@ -53,7 +63,8 @@ function fileLink(link: Element, page: URL): CoursewareFile | undefined {
     const extension = urlExtension
       ?? coursewareFileExtension(link.getAttribute('download') ?? '')
       ?? coursewareFileExtension(name);
-    return { kind: 'file', id: target.href, name, url: target.href, extension };
+    const entryUrl = context && fileEntry(link, page, target, context.course, context.row);
+    return { kind: 'file', id: target.href, name, url: target.href, extension, ...(entryUrl ? { entryUrl } : {}) };
   } catch { return undefined; }
 }
 
@@ -98,7 +109,7 @@ function readFolder(list: Element, page: URL, course: Course): CoursewareListing
       if (folder && new URL(folder.url).searchParams.get('content_id') !== page.searchParams.get('content_id')) {
         if (!items.has(folder.id)) items.set(folder.id, folder);
       } else {
-        const file = fileLink(heading, page);
+        const file = fileLink(heading, page, { course, row });
         if (file && !items.has(file.id)) items.set(file.id, file);
       }
     }

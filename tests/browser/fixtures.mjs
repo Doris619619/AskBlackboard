@@ -39,10 +39,11 @@ export const alternateCoursewareLanding = `/webapps/blackboard/execute/announcem
 export const historicalCoursewareAlternate = alternateCoursewareLanding.replace(alternateCoursewareCourseId, historicalCoursewareCourseId);
 export const coursewarePortal = reportPortal.replace('</ul></div><h3>No Term Assigned', `<li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${coursewareCourseId}">ECE4016:Example Course_L01L02</a></li><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${alternateCoursewareCourseId}">ECE3060:Introduction to Robotics_L01</a></li></ul></div><h3>2600UG</h3><div><ul class="courseListing"><li><a href="/webapps/blackboard/execute/launcher?type=Course&amp;id=${historicalCoursewareCourseId}">ECE4016:Older Course_L02</a></li></ul></div><h3>No Term Assigned`);
 export const lectureFilePath = '/bbcswebdav/pid-961-dt-content-rid-971_1/xid-971_1';
+export const lectureFileEntryPath = `/webapps/blackboard/execute/content/file?cmd=view&content_id=_961_1&course_id=${coursewareCourseId}`;
 export const tutorialFilePath = '/bbcswebdav/xid-972_1';
 export const unselectedFilePath = '/bbcswebdav/xid-973_1';
 export const assignmentAttachmentPath = '/bbcswebdav/xid-974_1';
-export const lectureBytes = Buffer.from('%PDF-1.7\nSynthetic courseware PDF\n%%EOF');
+export const lectureBytes = Buffer.concat([Buffer.from('%PDF-1.7\nSynthetic courseware PDF\n'), Buffer.alloc(96 * 1024, 65), Buffer.from('\n%%EOF')]);
 export const tutorialBytes = Buffer.concat([Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]), Buffer.from('Synthetic legacy PPT')]);
 
 /** 为虚构课程提供教师菜单、多层目录、课件及不应暴露的作业附件。 */
@@ -58,7 +59,7 @@ export function coursewarePage(url) {
   const contentId = url.searchParams.get('content_id');
   const listing = {
     _960_1: `<li><h3><a href="${folder('_961_1')}">Lecture</a></h3></li>`,
-    _961_1: `<li><h3><a href="${lectureFilePath}" download="Week 01.pdf">Week 01</a></h3></li><li><h3><a href="${unselectedFilePath}">Unselected.pdf</a></h3><div class="vtbegenerated"><img src="${unselectedFilePath}" alt=""><iframe src="${unselectedFilePath}"></iframe></div></li><li><img class="item_icon" alt="Assignment"><h3><a href="/webapps/assignment/uploadAssignment">Assignment</a></h3><div class="attachments"><a href="${assignmentAttachmentPath}">Assignment.pdf</a></div></li>`,
+    _961_1: `<li id="contentListItem:_961_1"><h3><a href="${lectureFilePath}" onclick="this.href='${lectureFileEntryPath}'" download="Week 01.pdf">Week 01</a></h3></li><li><h3><a href="${unselectedFilePath}">Unselected.pdf</a></h3><div class="vtbegenerated"><img src="${unselectedFilePath}" alt=""><iframe src="${unselectedFilePath}"></iframe></div></li><li><img class="item_icon" alt="Assignment"><h3><a href="/webapps/assignment/uploadAssignment">Assignment</a></h3><div class="attachments"><a href="${assignmentAttachmentPath}">Assignment.pdf</a></div></li>`,
     _962_1: `<li><img class="item_icon" alt="File"><h3><a href="${tutorialFilePath}">Tutorial 01</a></h3></li>`,
   }[contentId];
   if (listing === undefined) return undefined;

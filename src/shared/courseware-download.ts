@@ -1,7 +1,9 @@
 /** 文件用途：校验已选课件的学校响应，并把原始字节流安全保存到用户选择的目录。 */
-import { coursewareFileUrl, isCoursewareFilename } from '../blackboard/courseware-policy';
-import type { CoursewareSelection } from './courseware-types';
+import { coursewareFileEntryUrl, coursewareFileExtension, coursewareFileUrl, isCoursewareFilename } from '../blackboard/courseware-policy';
+import { readCoursewareResponse, waitForNetwork } from './courseware-file-transfer';
+import type { CoursewareFile, CoursewareSelection } from './courseware-types';
 import { AppError } from './errors';
+import type { Course } from './types';
 
 const mimeExtensions = new Map(Object.entries({
   'application/pdf': 'pdf',
@@ -31,8 +33,8 @@ const mimeExtensions = new Map(Object.entries({
 const genericTypes = new Set(['', 'application/octet-stream', 'binary/octet-stream', 'application/download', 'application/force-download']);
 const zipExtensions = new Set(['zip', 'docx', 'pptx', 'xlsx', 'odt', 'ods', 'odp']);
 const oleExtensions = new Set(['doc', 'ppt', 'xls']);
+const recognizableHeaders = ['pdf', 'rtf', 'png', 'jpg', 'gif', 'rar', '7z'];
 const headerBytes = 4096;
-const networkIdleMs = 30_000;
 
 /** 把名称限制成一个 Windows 路径段，保留常用 Unicode 字符并为后缀留出长度。 */
 function pathPart(value: string, fallback: string): string {
@@ -80,15 +82,15 @@ function matchesFileHeader(extension: string, bytes: Uint8Array, decoded: string
     case 'png': return startsWithBytes(bytes, [137, 80, 78, 71, 13, 10, 26, 10]);
     case 'jpg': case 'jpeg': return startsWithBytes(bytes, [255, 216, 255]);
     case 'gif': return decoded.startsWith('GIF87a') || decoded.startsWith('GIF89a');
-    case 'rar': return startsWithBytes(bytes, [82, 97, 114, 33, 26, 7]);
+    case 'rar': return startsWithBytes(bytes, [82, 97, 114, 33, 26, 7, 0]) || startsWithBytes(bytes, [82, 97, 114, 33, 26, 7, 1, 0]);
     case '7z': return startsWithBytes(bytes, [55, 122, 188, 175, 39, 28]);
     case 'txt': case 'csv': return !/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(decoded);
     default: return false;
   }
 }
 
-/** 确定响应可安全保存的原文件名，拦截登录、错误 HTML 和类型不匹配。 */
-function validatedName(response: Response, url: URL, label: string, prefix: Uint8Array): string {
+/** 确定已选课件的文件名。学校缺少格式元信息时，仅用可区分文件类型的签名补后缀。 */
+function validatedName(response: Response, url: URL, originalUrl: URL, file: CoursewareFile, prefix: Uint8Array): string {
   const mime = (response.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
   const encoding = startsWithBytes(prefix, [255, 254]) ? 'utf-16le' : startsWithBytes(prefix, [254, 255]) ? 'utf-16be' : 'utf-8';
   const decoded = new TextDecoder(encoding).decode(prefix);
@@ -99,31 +101,19 @@ function validatedName(response: Response, url: URL, label: string, prefix: Uint
   const fromHeader = attachmentName(response.headers.get('content-disposition') ?? '').trim();
   const fromUrl = urlFilename(url).trim();
   const declared = mimeExtensions.get(mime);
-  const named = [fromHeader, fromUrl, label.trim()].find(isCoursewareFilename);
-  const suffix = named?.split('.').at(-1) ?? declared;
+  const named = [fromHeader, fromUrl, urlFilename(originalUrl).trim(), file.name.trim()].find(isCoursewareFilename);
+  const hint = coursewareFileExtension(`.${file.extension ?? ''}`);
+  const compatibleHint = hint && (!declared || compatibleMime(hint, declared)) ? hint : undefined;
+  const suffix = named?.split('.').at(-1) ?? compatibleHint ?? declared ?? recognizableHeaders.find(
+    /** ZIP 和 OLE 的签名可对应多种文档格式，单凭签名不能决定后缀。 */
+    function matches(candidate) { return matchesFileHeader(candidate, prefix, decoded); },
+  );
   const extension = suffix?.toLowerCase();
   if (!suffix || !extension || (declared ? !compatibleMime(extension, declared) : !genericTypes.has(mime)) || !matchesFileHeader(extension, prefix, decoded)) {
     throw new AppError('file_not_available', '课件格式未识别或文件内容不完整，未写入本地。');
   }
-  const stem = named ? named.slice(0, -(suffix.length + 1)) : fromHeader || label;
+  const stem = named ? named.slice(0, -(suffix.length + 1)) : fromHeader || file.name;
   return `${pathPart(stem, '课件')}.${suffix}`;
-}
-
-/** 仅限制本次网络等待。计时到期时中止该文件的请求，并解除等待中的读取。 */
-async function waitForNetwork<T>(pending: Promise<T>, request: AbortController): Promise<T> {
-  const { signal } = request;
-  let interrupt!: () => void;
-  const interrupted = new Promise<never>(/** 收到超时或用户取消时结束当前等待。 */ function onInterrupted(_resolve, reject) {
-    /** 保留取消方提供的原因，使批次区分用户取消和单文件超时。 */
-    interrupt = function rejectAbort() { reject(signal.reason); };
-    signal.addEventListener('abort', interrupt, { once: true });
-    if (signal.aborted) interrupt();
-  });
-  /** 一次停滞只中止当前文件，让同一批中其他文件继续保存。 */
-  function timeOut() { request.abort(new AppError('file_download_failed', '等待课件数据超时，请重试。')); }
-  const timer = setTimeout(timeOut, networkIdleMs);
-  try { return await Promise.race([pending, interrupted]); }
-  finally { clearTimeout(timer); signal.removeEventListener('abort', interrupt); }
 }
 
 /** 读取网络流的一个分块，保留超时和取消状态，并屏蔽底层网络错误。 */
@@ -197,9 +187,10 @@ async function writeCourseware(root: FileSystemDirectoryHandle, path: string[], 
   }
 }
 
-/** 使用浏览器登录态读取一个已选课件，分别限制响应头和分块的空闲等待。 */
-export async function saveCoursewareFile(root: FileSystemDirectoryHandle, courseCode: string, selection: CoursewareSelection, signal?: AbortSignal): Promise<string> {
-  const url = coursewareFileUrl(selection.file.url);
+/** 使用学校声明的只读入口读取一个已选课件，并验证文件字节后写入所选目录。 */
+export async function saveCoursewareFile(root: FileSystemDirectoryHandle, course: Pick<Course, 'code' | 'courseId'>, selection: CoursewareSelection, signal?: AbortSignal, schoolTabId?: number): Promise<string> {
+  const file = coursewareFileUrl(selection.file.url);
+  const entry = selection.file.entryUrl ? coursewareFileEntryUrl(selection.file.entryUrl, file, course.courseId) : file;
   signal?.throwIfAborted();
   const request = new AbortController();
   /** 将用户取消传给当前文件的请求。单文件超时由自身控制器处理。 */
@@ -207,20 +198,14 @@ export async function saveCoursewareFile(root: FileSystemDirectoryHandle, course
   signal?.addEventListener('abort', cancel, { once: true });
   let reader: ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>> | undefined;
   try {
-    let response: Response;
-    try {
-      response = await waitForNetwork(fetch(url.href, { method: 'GET', credentials: 'include', cache: 'no-store', redirect: 'error', signal: request.signal }), request);
-    } catch {
-      request.signal.throwIfAborted();
-      throw new AppError('file_download_failed', '无法下载此课件，请确认 Blackboard 登录状态后重试。');
-    }
+    const { response, url } = await readCoursewareResponse(entry, { originalUrl: file, courseId: course.courseId, schoolTabId }, request);
     reader = response.body?.getReader();
     if (response.status === 401) throw new AppError('login_required', '请在 Blackboard 页面重新登录后再下载。');
     if (response.status === 403) throw new AppError('file_not_available', '当前账号没有这份课件的访问权限。');
     if (response.status !== 200 || response.redirected || (response.url && response.url !== url.href) || !reader) throw new AppError('file_not_available', '学校没有返回可保存的课件文件。');
     const { prefix, buffered } = await readHeader(reader, request);
-    const filename = validatedName(response, url, selection.file.name, prefix);
-    const path = [pathPart(courseCode, '课程'), ...selection.folders.map(/** 保留老师设置的栏目层级，并逐段清理目录名称。 */ function folderPart(folder) { return pathPart(folder.name, '文件夹'); })];
+    const filename = validatedName(response, url, file, selection.file, prefix);
+    const path = [pathPart(course.code, '课程'), ...selection.folders.map(/** 保留老师设置的栏目层级，并逐段清理目录名称。 */ function folderPart(folder) { return pathPart(folder.name, '文件夹'); })];
     /** 在扩展页面间串行分配本地文件名，防止两个批次覆盖彼此的文件。 */
     async function write(): Promise<string> { return writeCourseware(root, path, filename, reader!, buffered, request); }
     return await (navigator.locks ? navigator.locks.request('askblackboard-courseware-write', { signal: request.signal }, write) : write());

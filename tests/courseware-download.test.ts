@@ -4,6 +4,7 @@ import { saveCoursewareFile } from '../src/shared/courseware-download';
 import type { CoursewareSelection } from '../src/shared/courseware-types';
 
 const schoolFile = 'https://bb.cuhk.edu.cn/bbcswebdav/pid-100-dt-content-rid-200_1/xid-200_1';
+const schoolEntry = 'https://bb.cuhk.edu.cn/webapps/blackboard/execute/content/file?cmd=view&content_id=_100_1&course_id=_700_1';
 const pdf = new TextEncoder().encode('%PDF-1.7\r\nfixture\n');
 
 /** 模拟浏览器文件只在关闭写入流时提交，写入中断后保留原文件。 */
@@ -78,7 +79,7 @@ function selection(name = 'Week 01.pdf', url = schoolFile): CoursewareSelection 
 
 /** 将测试替身接入下载器，浏览器实测另用实际目录接口。 */
 function save(root: MemoryDirectory, item = selection(), signal?: AbortSignal) {
-  return saveCoursewareFile(root as unknown as FileSystemDirectoryHandle, 'ECE4016', item, signal);
+  return saveCoursewareFile(root as unknown as FileSystemDirectoryHandle, { code: 'ECE4016', courseId: '_700_1' }, item, signal);
 }
 
 /** 按课件层级读取已创建的最后一级目录，供检查结果字节和文件名。 */
@@ -95,6 +96,20 @@ function mockResponse(response: Response) {
   return fetchMock;
 }
 
+/** 模拟浏览器发给扩展的跳转事件和手动跳转响应，后续请求仍由测试断言。 */
+function mockFileRedirect(destination: string, response: Response) {
+  const listeners = new Set<(event: Pick<chrome.webRequest.OnBeforeRedirectDetails, 'url' | 'redirectUrl' | 'method' | 'initiator'>) => void>();
+  const redirects = { addListener: vi.fn(/** 暂存本轮监听器。 */ listener => listeners.add(listener)), removeListener: vi.fn(/** 请求结束后释放监听器。 */ listener => listeners.delete(listener)) };
+  vi.stubGlobal('chrome', { runtime: { id: 'test-extension' }, webRequest: { onBeforeRedirect: redirects } });
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(/** 只为官方入口提供跳转，其他地址返回虚构文件。 */ async function fetchFile(url) {
+    if (url !== schoolEntry) return response;
+    for (const listener of listeners) listener({ url, redirectUrl: destination, method: 'GET', initiator: 'chrome-extension://test-extension' });
+    return new Response(null, { status: 302 });
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return { fetchMock, redirects, listeners };
+}
+
 afterEach(/** 复原测试中替换的网络接口和计时器。 */ function restoreNetwork() { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe('课件文件保存', /** 验证目录、格式、拒绝范围和失败清理。 */ function coursewareDownloadCases() {
@@ -102,8 +117,69 @@ describe('课件文件保存', /** 验证目录、格式、拒绝范围和失败
     const root = new MemoryDirectory();
     const fetchMock = mockResponse(new Response(pdf, { headers: { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename="Week 01.pdf"; filename*=UTF-8\'\'%E8%AE%B2%E4%B9%89%2001.pdf' } }));
     expect(await save(root)).toBe('ECE4016/Content/Lecture/讲义 01.pdf');
-    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(schoolFile, expect.objectContaining({ method: 'GET', credentials: 'include', redirect: 'error' }));
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(schoolFile, expect.objectContaining({ method: 'GET', credentials: 'include', redirect: 'manual' }));
     expect((await (await lecture(root)).getFileHandle('讲义 01.pdf')).bytes).toEqual([...pdf]);
+  });
+
+  it('文件响应只有通用类型时用 PDF 签名补全标题后缀', /** 课件目录和下载响应都没有真实文件名，仍可从文件头确认格式。 */ async function detectsPdfFromBytes() {
+    const root = new MemoryDirectory();
+    const request = mockResponse(new Response(pdf, { headers: { 'Content-Type': 'application/octet-stream' } }));
+    expect(await save(root, selection('Introduction'))).toBe('ECE4016/Content/Lecture/Introduction.pdf');
+    expect(request).toHaveBeenCalledTimes(1);
+    expect((await (await lecture(root)).getFileHandle('Introduction.pdf')).bytes).toEqual([...pdf]);
+  });
+
+  it('先请求学校只读文件入口，再经确认的 WebDAV 跳转保存原字节', /** 重现教师目录点击入口与原始 WebDAV 链接不同的下载。 */ async function savesThroughCourseEntry() {
+    const root = new MemoryDirectory();
+    const item = selection('Lecture 7');
+    item.file.entryUrl = schoolEntry;
+    const { fetchMock, listeners } = mockFileRedirect(schoolFile, new Response(pdf));
+    expect(await save(root, item)).toBe('ECE4016/Content/Lecture/Lecture 7.pdf');
+    expect(fetchMock.mock.calls.map(call => call[0])).toEqual([schoolEntry, schoolFile]);
+    for (const [, init] of fetchMock.mock.calls) expect(init).toMatchObject({ method: 'GET', redirect: 'manual' });
+    expect(listeners.size).toBe(0);
+    expect((await (await lecture(root)).getFileHandle('Lecture 7.pdf')).bytes).toEqual([...pdf]);
+  });
+
+  it.each([
+    ['https://external.example/bbcswebdav/xid-200_1', 'file_redirect_blocked'],
+    ['https://bb.cuhk.edu.cn/webapps/assignment/uploadAssignment?course_id=_700_1', 'file_redirect_blocked'],
+    ['https://bb.cuhk.edu.cn/webapps/login/', 'login_required'],
+  ])('不请求课件跳转到的非文件地址 %s', /** 同源操作页、外站和登录入口均不会收到后续 GET。 */ async function rejectsFileRedirect(destination, code) {
+    const root = new MemoryDirectory();
+    const item = selection();
+    item.file.entryUrl = schoolEntry;
+    const { fetchMock, listeners } = mockFileRedirect(destination, new Response(pdf));
+    await expect(save(root, item)).rejects.toMatchObject({ code });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(listeners.size).toBe(0);
+    expect(root.entries.size).toBe(0);
+  });
+
+  it('不请求与选中课程、课件不匹配的官方入口', /** 缓存或交接给出的入口也需按当前选中范围复核。 */ async function rejectsOtherFileEntry() {
+    const root = new MemoryDirectory();
+    const fetchMock = mockResponse(new Response(pdf));
+    const item = selection();
+    item.file.entryUrl = schoolEntry.replace('_700_1', '_799_1');
+    await expect(save(root, item)).rejects.toMatchObject({ code: 'unsafe_url' });
+    item.file.entryUrl = schoolEntry.replace('_100_1', '_101_1');
+    await expect(save(root, item)).rejects.toMatchObject({ code: 'unsafe_url' });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('下载响应没有文件名时结合课件目录给出的后缀和实际签名', /** ZIP 文件头无法区分多种 Office 文档，以学校目录的明确文件后缀确认格式。 */ async function savesWithListingHint() {
+    const root = new MemoryDirectory();
+    const item = selection('Introduction');
+    item.file.extension = 'pptx';
+    mockResponse(new Response(Uint8Array.of(80, 75, 3, 4, 1, 2, 3), { headers: { 'Content-Type': 'application/zip' } }));
+    expect(await save(root, item)).toBe('ECE4016/Content/Lecture/Introduction.pptx');
+  });
+
+  it('只有共用的 ZIP 文件头时不猜测文件格式', /** 通用类型和无后缀文件名无法确认内部文档类别。 */ async function rejectsAmbiguousSignature() {
+    const root = new MemoryDirectory();
+    mockResponse(new Response(Uint8Array.of(80, 75, 3, 4, 1, 2, 3), { headers: { 'Content-Type': 'application/octet-stream' } }));
+    await expect(save(root, selection('Introduction'))).rejects.toMatchObject({ code: 'file_not_available' });
+    expect(root.entries.size).toBe(0);
   });
 
   it('在文件名或目录名冲突时分配新编号并保留既有文件', /** 测试大小写冲突且相邻编号已被目录占用。 */ async function preservesExistingFiles() {

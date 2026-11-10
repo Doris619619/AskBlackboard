@@ -1,14 +1,29 @@
-/** 文件用途：只接收扩展受信后台的有限读取消息，使用当前 Blackboard 登录读取门户、公告、作业列表和课件目录。 */
+/** 文件用途：只接收受信扩展的有限命令，使用当前 Blackboard 登录读取门户、公告、作业列表和选中的课件。 */
 import { AppError, friendlyError } from '../shared/errors';
 import type { RuntimeResult } from '../shared/types';
 import { parseAnnouncementPage } from '../blackboard/announcements';
 import { readCourseAnnouncements, readCourseDiscovery } from '../blackboard/collector';
-import { parseCourseDiscovery } from '../blackboard/discovery';
+import { parseCourseDiscovery, readAccountName } from '../blackboard/discovery';
 import { highlightSource } from '../blackboard/highlight';
 import { isCourse, isTrustedExtensionSender, type ContentMessage } from '../blackboard/messages';
-import { announcementUrl, isPortalUrl } from '../blackboard/policy';
+import { announcementUrl, isPortalUrl, schoolUrl } from '../blackboard/policy';
 import { readCourseAssignments, parseAssignmentPage } from '../blackboard/assignments';
 import { parseCoursewareListing, readCoursewareListing } from '../blackboard/courseware';
+import { isBrowseAnchorUrl, type BrowseAnchor } from './browse-session';
+import { connectCoursewareFile } from './courseware-file-source';
+
+const documentToken = crypto.randomUUID();
+
+/** 从已登录页头提取显示名，使用扩展生成的文档标识，不读取学校会话凭据。 */
+function readBrowseDocument(): Omit<BrowseAnchor, 'tabId'> | undefined {
+  if (!isBrowseAnchorUrl(location.href) || document.querySelector('input[type="password"], #loginForm, #loginFormList')) return undefined;
+  const logoutLink = document.querySelector('a[id="topframe.logout.label"]')?.getAttribute('href');
+  if (!logoutLink) return undefined;
+  const logout = schoolUrl(logoutLink, location.href);
+  if (logout.pathname !== '/webapps/login/' || logout.searchParams.get('action') !== 'logout') return undefined;
+  const accountName = readAccountName(document);
+  return accountName ? { documentToken, accountName } : undefined;
+}
 
 /** 执行内部只读动作；任何未经验证的 URL、课程对象和未知动作都会失败。 */
 async function handleMessage(raw: unknown): Promise<unknown> {
@@ -16,6 +31,7 @@ async function handleMessage(raw: unknown): Promise<unknown> {
   const message = raw as ContentMessage;
   switch (message.type) {
     case 'ping': return true;
+    case 'read_browse_anchor': return readBrowseDocument();
     case 'read_discovery': return readCourseDiscovery();
     case 'read_discovery_page':
       if (/login|signon|sso/i.test(location.pathname)) throw new AppError('login_required', '请在 Blackboard 页面正常登录，再回来查询。');
@@ -67,3 +83,4 @@ function messageListener(raw: unknown, sender: chrome.runtime.MessageSender, res
 }
 
 chrome.runtime.onMessage.addListener(messageListener);
+chrome.runtime.onConnect.addListener(connectCoursewareFile);

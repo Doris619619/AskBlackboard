@@ -70,6 +70,21 @@ describe('courseware metadata', () => {
     ]);
   });
 
+  it('uses the same-course click entry only for the matching file heading', /** 模拟学校以只读入口替代原始 WebDAV 地址的真实目录结构。 */ function readsFileEntry() {
+    const entry = '/webapps/blackboard/execute/content/file?cmd=view&content_id=_810_1&course_id=_700_1';
+    const metadata = `<ul id="content_listContainer">
+      <li id="contentListItem:_810_1"><h3><a href="${pdf}" onclick="this.href='${entry}'">Lecture 7</a></h3></li>
+      <li id="contentListItem:_811_1"><h3><a href="${pdf.replace('pid-810', 'pid-811')}" onclick="this.href='${entry.replace('view', 'edit').replace('_810_1', '_811_1')}'">Unapproved action</a></h3></li>
+      <li id="contentListItem:_812_1"><h3><a href="${pdf.replace('pid-810', 'pid-812')}" onclick="this.href='${entry.replace('_810_1', '_812_1').replace('_700_1', '_799_1')}'">Other course</a></h3></li>
+      <li id="contentListItem:_813_1"><h3><a href="${pdf.replace('pid-810', 'pid-813')}" onclick="this.href='${entry.replace('_810_1', '_813_1')}'; submit()">Nonliteral handler</a></h3></li>
+      <li id="contentListItem:_815_1"><h3><a href="${pdf.replace('pid-810', 'pid-814')}" onclick="this.href='${entry.replace('_810_1', '_814_1')}'">Different row</a></h3></li>
+    </ul>`;
+    const { items } = parseCoursewareListing(parseHtml(metadata), folderUrl, course, folderUrl);
+    expect(items[0]).toMatchObject({ id: origin + pdf, url: origin + pdf, entryUrl: origin + entry });
+    expect(items).toHaveLength(5);
+    for (const item of items.slice(1)) expect(item).not.toHaveProperty('entryUrl');
+  });
+
   it('distinguishes an empty folder from unreadable, wrong-course, and wrong-folder pages', () => {
     expect(parseCoursewareListing(parseHtml('<ul id="content_listContainer"></ul>'), childUrl, course, childUrl)).toEqual({ items: [] });
     expect(() => parseCoursewareListing(parseHtml('<p>Unexpected page</p>'), folderUrl, course, folderUrl)).toThrow('未识别');

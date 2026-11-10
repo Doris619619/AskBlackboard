@@ -5,7 +5,8 @@ import { ANNOUNCEMENT_PATH, BLACKBOARD_ORIGIN, schoolUrl } from './policy';
 
 const fileSuffix = /\.(?:pdf|pptx?|docx?|xlsx?|txt|csv|rtf|odt|ods|odp|zip|rar|7z|png|jpe?g|gif)$/i;
 const webDavId = /^xid-\d+_\d+$/i;
-const webDavItem = /^pid-\d+-dt-content-rid-\d+_\d+$/i;
+const webDavItem = /^pid-(\d+)-dt-content-rid-\d+_\d+$/i;
+const fileEntryPath = '/webapps/blackboard/execute/content/file';
 const repositories = new Set(['courses', 'institution', 'orgs', 'library']);
 export const COURSEWARE_REDIRECT_MESSAGE = '无法确认课件目录的跳转目标，请在 Blackboard 打开该课程的课件栏目后重试。';
 
@@ -60,4 +61,17 @@ export function coursewareFileUrl(raw: string, base = BLACKBOARD_ORIGIN): URL {
   } catch {
     throw new AppError('unsafe_url', '只能下载课程列表中可见的 Blackboard 课件文件。');
   }
+}
+
+/** Blackboard 文件链接可声明一个只读点击入口，必须与选中的课程和 WebDAV 内容项匹配。 */
+export function coursewareFileEntryUrl(raw: string, file: URL, courseId: string, base = BLACKBOARD_ORIGIN): URL {
+  const url = schoolUrl(raw, base);
+  const contentNumber = webDavItem.exec(decodeURIComponent(file.pathname.split('/')[2] ?? ''))?.[1];
+  const params = url.searchParams;
+  if (!contentNumber || !/^_\d+_\d+$/.test(courseId) || url.pathname !== fileEntryPath || url.hash
+    || params.size !== 3 || params.get('cmd') !== 'view' || params.get('course_id') !== courseId
+    || params.get('content_id') !== `_${contentNumber}_1`) {
+    throw new AppError('unsafe_url', '课件入口与选中的课程或文件不一致。');
+  }
+  return url;
 }

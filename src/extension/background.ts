@@ -1,17 +1,19 @@
 /** 文件用途：协调 Blackboard 标签页、受限只读采集、专用 DOM 备用标签页与来源回跳。 */
 import { AppError, friendlyError } from '../shared/errors';
 import { RUNTIME_PROTOCOL } from '../shared/runtime-version';
-import type { AnnouncementSnapshot, Course, CourseDiscovery, ExtensionMessage, RuntimeResult, SourceEvidence } from '../shared/types';
+import type { AnnouncementSnapshot, Course, CourseBrowseSnapshot, CourseDiscovery, ExtensionMessage, RuntimeResult, SourceEvidence } from '../shared/types';
 import { MAX_ANNOUNCEMENT_PAGES } from '../blackboard/collector';
 import type { ParsedAnnouncementPage } from '../blackboard/announcements';
 import { isCourse, isTrustedExtensionSender, type ContentMessage } from '../blackboard/messages';
 import { announcementUrl, BLACKBOARD_ORIGIN, PORTAL_URL, isPortalUrl } from '../blackboard/policy';
 import { assignmentReadUrl, assignmentEntry, CONTENT_PATH } from '../blackboard/assignment-policy';
 import { readCourseAssignments, type AssignmentPage } from '../blackboard/assignments';
-import { coursewarePageUrl } from '../blackboard/courseware-policy';
+import { coursewareFileExtension, coursewareFileUrl, coursewarePageUrl } from '../blackboard/courseware-policy';
 import type { CoursewareListing } from '../shared/courseware-types';
 import { readCoursewareWithRedirects } from './courseware-redirect';
 import { shareCourseAuthorization } from './course-authorization';
+import { browseRevision, invalidateBrowseCache, matchesBrowseAccount, readCachedCourses, readCachedDirectory, sameBrowseAnchor, saveBrowseCourses, saveBrowseDirectory, saveBrowseFormat } from './browse-cache';
+import { readBrowseAnchor, watchBrowseSession } from './browse-session';
 
 const TAB_TIMEOUT_MS = 20000;
 const CONTENT_RETRY_MS = 2200;
@@ -187,6 +189,24 @@ async function discoverForSidebar(): Promise<CourseDiscovery> {
   }
 }
 
+/** 实时发现课程，只把结果与读取前后仍匹配的学校文档关联。 */
+async function discoverForBrowse(): Promise<CourseBrowseSnapshot> {
+  const started = browseRevision();
+  const requestedAt = Date.now();
+  const anchor = await readBrowseAnchor();
+  const discovery = await discoverForSidebar();
+  const current = anchor && await readBrowseAnchor();
+  if (started !== browseRevision() || (anchor && !sameBrowseAnchor(anchor, current))) throw new AppError('browse_context_changed', 'Blackboard 页面或登录状态已变化，请刷新课程。');
+  if (!anchor) return { discovery };
+  if (anchor.accountName !== discovery.accountName) {
+    await invalidateBrowseCache();
+    return { discovery };
+  }
+  const snapshot = await saveBrowseCourses(anchor, discovery, started, requestedAt);
+  if (started !== browseRevision()) throw new AppError('browse_context_changed', 'Blackboard 登录状态已变化，请刷新课程。');
+  return snapshot ?? { discovery };
+}
+
 /** 用同一张可用标签页校验课程并完成操作，临时门户保留到操作结束。 */
 async function withDiscoveryTab<T>(tabId: number, operation: (id: number, discovery: CourseDiscovery) => T | Promise<T>): Promise<T> {
   /** 从临时门户读取当前账号，并在关闭页面前完成本轮操作。 */
@@ -218,11 +238,27 @@ function requireCurrentCourse(discovery: CourseDiscovery, requested: Course): Co
   throw new AppError('course_changed', '当前账号、学期或课程列表已变化，请重新选择课程。');
 }
 
-/** 确认课程仍可访问。并行问答可合并正在进行的门户校验，保存前独立读取。 */
-async function currentCourse(tabId: number, requested: Course, shareInFlight = true): Promise<Course> {
+/** 确认课程仍可访问，并行问答只合并正在进行的门户校验。 */
+async function currentCourse(tabId: number, requested: Course): Promise<Course> {
   announcementUrl(requested.announcementUrl, requested.courseId);
-  const discovery = await (shareInFlight ? shareCourseAuthorization(tabId, discover) : discover(tabId));
+  const discovery = await shareCourseAuthorization(tabId, discover);
   return requireCurrentCourse(discovery, requested);
+}
+
+/** 选定保存目录后独立核对课程。优先返回已登录页面用于同源文件传输。 */
+async function validateDownload(requested: Course, cacheScope?: string): Promise<number | undefined> {
+  announcementUrl(requested.announcementUrl, requested.courseId);
+  const started = browseRevision();
+  const tabId = (await readBrowseAnchor())?.tabId ?? await blackboardTab();
+  /** 临时门户只用于本次校验，结束后由外层关闭。 */
+  async function verify(id: number, discovery: CourseDiscovery): Promise<number | undefined> {
+    requireCurrentCourse(discovery, requested);
+    if (started !== browseRevision() || (cacheScope && !await matchesBrowseAccount(cacheScope, discovery, started))) {
+      throw new AppError('browse_context_changed', 'Blackboard 浏览会话已变化，请刷新课程后重新选择课件。');
+    }
+    return id === tabId ? id : undefined;
+  }
+  return withDiscoveryTab(tabId, verify);
 }
 
 /** 用本轮专用标签页逐页读取渲染后的公告；不会改动学生已经打开的页面。 */
@@ -334,7 +370,12 @@ async function handleMessage(raw: unknown): Promise<unknown> {
   const message = raw as ExtensionMessage;
   switch (message.type) {
     case 'ping': return { protocol: RUNTIME_PROTOCOL };
-    case 'discover_courses': return discoverForSidebar();
+    case 'discover_courses': return discoverForBrowse();
+    case 'read_cached_courses': {
+      const started = browseRevision();
+      const anchor = await readBrowseAnchor();
+      return anchor ? (await readCachedCourses(anchor, started) ?? null) : null;
+    }
     case 'collect_announcements': {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请重新读取课程列表。');
       const tabId = await blackboardTab();
@@ -345,21 +386,40 @@ async function handleMessage(raw: unknown): Promise<unknown> {
       const tabId = await blackboardTab();
       return collectAssignments(tabId, await currentCourse(tabId, message.course));
     }
+    case 'read_cached_courseware':
     case 'collect_courseware': {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
       if (message.folderUrl !== undefined && typeof message.folderUrl !== 'string') throw new AppError('unsafe_url', '课件目录地址无效。');
-      const { course: requested, folderUrl } = message;
+      const { course: requested, folderUrl, cacheScope } = message;
       announcementUrl(requested.announcementUrl, requested.courseId);
+      const folder = folderUrl === undefined ? undefined : coursewarePageUrl(requested.courseId, folderUrl).href;
+      const started = browseRevision();
+      const requestedAt = Date.now();
+      if (message.type === 'read_cached_courseware') {
+        const anchor = await readBrowseAnchor();
+        return anchor ? (await readCachedDirectory(anchor, message.cacheScope, requested, folder, started) ?? null) : null;
+      }
       /** 由提供课程目录的同一标签页读取课件，页面断开时由外层恢复。 */
-      function readFromTab(id: number, discovery: CourseDiscovery): Promise<CoursewareListing> {
-        return collectCourseware(id, requireCurrentCourse(discovery, requested), folderUrl);
+      async function readFromTab(id: number, discovery: CourseDiscovery): Promise<CoursewareListing> {
+        const course = requireCurrentCourse(discovery, requested);
+        if (cacheScope && !await matchesBrowseAccount(cacheScope, discovery, started)) throw new AppError('browse_context_changed', 'Blackboard 浏览会话已变化，请刷新课程。');
+        const listing = await collectCourseware(id, course, folder);
+        if (!cacheScope) return listing;
+        const saved = await saveBrowseDirectory(cacheScope, course, folder, listing, started, requestedAt);
+        if (!await matchesBrowseAccount(cacheScope, discovery, started)) throw new AppError('browse_context_changed', 'Blackboard 登录状态已变化，请刷新课程。');
+        return saved ?? listing;
       }
       return withDiscoveryTab(await blackboardTab(), readFromTab);
     }
+    case 'remember_courseware_format': {
+      const { course, fileUrl, extension, cacheScope } = message;
+      if (!isCourse(course) || typeof fileUrl !== 'string' || typeof extension !== 'string' || coursewareFileExtension(`file.${extension}`) !== extension) return;
+      await saveBrowseFormat(cacheScope, course, coursewareFileUrl(fileUrl).href, extension);
+      return;
+    }
     case 'validate_courseware_download': {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
-      await currentCourse(await blackboardTab(), message.course, false);
-      return undefined;
+      return validateDownload(message.course, message.cacheScope);
     }
     case 'open_source': return openSource(message.source, message.quote);
     default: throw new AppError('invalid_message', '该操作不属于侧栏支持的只读查询。');
@@ -369,10 +429,12 @@ async function handleMessage(raw: unknown): Promise<unknown> {
 /** 在消息通道中报告本轮结果；任何错误均不得包含学校会话或模型凭据。 */
 function messageListener(raw: unknown, sender: chrome.runtime.MessageSender, respond: (result: RuntimeResult<unknown>) => void): boolean {
   if (!isTrustedExtensionSender(sender)) { respond({ ok: false, error: { code: 'untrusted_sender', message: '已拒绝网页发起的扩展操作。' } }); return false; }
+  const started = browseRevision();
   /** 将课程、公告或原文打开结果回复受信侧栏。 */
   function succeeded(data: unknown): void { respond({ ok: true, data }); }
   /** 将采集失败转换成稳定业务代码和无凭据说明。 */
-  function failed(error: unknown): void {
+  async function failed(error: unknown): Promise<void> {
+    if (started === browseRevision() && error instanceof AppError && ['login_required', 'consent_required', 'account_unknown', 'course_changed'].includes(error.code)) await invalidateBrowseCache();
     respond({ ok: false, error: { code: error instanceof AppError ? error.code : 'read_failed', message: friendlyError(error), diagnostic: error instanceof AppError ? error.diagnostic : undefined } });
   }
   void handleMessage(raw).then(succeeded, failed);
@@ -381,7 +443,10 @@ function messageListener(raw: unknown, sender: chrome.runtime.MessageSender, res
 
 /** 安装或启动时将配置存储限制在受信上下文，并配置用户点击图标打开侧栏。 */
 async function initialize(): Promise<void> {
-  await chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' });
+  await Promise.all([
+    chrome.storage.local.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }),
+    chrome.storage.session.setAccessLevel({ accessLevel: 'TRUSTED_CONTEXTS' }),
+  ]);
   if (chrome.sidePanel?.setPanelBehavior) await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 }
 
@@ -391,6 +456,8 @@ function initializationFailed(): void { /* 不记录可能含凭据的浏览器�
 function initializeListener(): void { void initialize().catch(initializationFailed); }
 
 chrome.runtime.onMessage.addListener(messageListener);
+/** 在正常登录退出或原文档导航时撤下侧栏快照。 */
+watchBrowseSession(function invalidate(tabId) { void invalidateBrowseCache(tabId); });
 chrome.runtime.onInstalled.addListener(initializeListener);
 chrome.runtime.onStartup.addListener(initializeListener);
 initializeListener();

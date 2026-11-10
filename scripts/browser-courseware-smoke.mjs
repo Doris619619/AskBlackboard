@@ -1,7 +1,7 @@
 /** 文件用途：用实际扩展、虚构课件和浏览器私有文件系统验证课件选取与原字节保存。 */
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { alternateCoursewareCourseId, coursewareCourseId, forbiddenCoursewareLanding, historicalCoursewareCourseId, lectureBytes, lectureFilePath, tutorialBytes, tutorialFilePath } from '../tests/browser/fixtures.mjs';
+import { alternateCoursewareCourseId, coursewareCourseId, forbiddenCoursewareLanding, historicalCoursewareCourseId, lectureBytes, lectureFileEntryPath, lectureFilePath, tutorialBytes, tutorialFilePath } from '../tests/browser/fixtures.mjs';
 
 /** 仅替换系统选择器，保存仍经过浏览器真实目录句柄及可写文件流。 */
 async function installPicker(panel) {
@@ -132,9 +132,13 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   passed('courseware returns through both parent levels without another portal or directory request');
   await content.click();
   await lecture.waitFor();
+  const refresh = panel.getByRole('button', { name: '刷新目录', exact: true });
+  const refreshReady = refresh.and(panel.locator(':enabled'));
+  await refreshReady.waitFor();
   const readsBeforeRefresh = state.directoryReads;
-  await panel.getByRole('button', { name: '刷新目录', exact: true }).click();
-  await lecture.waitFor();
+  await refresh.click();
+  await refreshReady.waitFor();
+  assert.equal(await lecture.isVisible(), true);
   assert.equal(state.directoryReads - readsBeforeRefresh, 2);
   await back.click();
   await tutorial.click();
@@ -161,6 +165,7 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   await download.click();
   await panel.waitForFunction(function pickerOpened() { return window.coursewarePickerCalls === 1; });
   assert.deepEqual(state.files, []);
+  assert.deepEqual(state.fileEntries, []);
   state.loginExpired = true;
   await download.click();
   const retry = panel.getByRole('button', { name: '重试失败项', exact: true });
@@ -168,12 +173,15 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   await retry.waitFor();
   await results.getByText(/登录/).first().waitFor();
   assert.deepEqual(state.files, []);
+  assert.deepEqual(state.fileEntries, []);
   state.loginExpired = false;
   passed('cancelled directory picker and expired login send no courseware requests');
 
   await retry.click();
   await panel.getByRole('status').filter({ hasText: '已保存 1 个文件 · 失败 1 个' }).waitFor();
   assert.deepEqual(state.files, [lectureFilePath, tutorialFilePath]);
+  assert.deepEqual(state.fileEntries, [lectureFileEntryPath]);
+  passed('courseware downloads use the verified Blackboard click entry and follow a same-origin WebDAV redirect');
   await results.getByText('Week 01 (1).pdf', { exact: false }).waitFor();
   state.failTutorial = false;
   await retry.click();

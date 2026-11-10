@@ -1,12 +1,13 @@
 /** 文件用途：协调用户选目录、课件逐项保存和受信扩展标签页间的一次性交接。 */
 import { useEffect, useRef, useState } from 'react';
-import { validateCoursewareDownload } from '../shared/browser-client';
+import { coursewareFileExtension } from '../blackboard/courseware-policy';
+import { rememberCoursewareFormat, validateCoursewareDownload } from '../shared/browser-client';
 import { saveCoursewareFile } from '../shared/courseware-download';
 import { AppError, friendlyError } from '../shared/errors';
 import type { CoursewareSelection } from '../shared/courseware-types';
 import type { Course } from '../shared/types';
 
-export interface CoursewareBatch { course: Course; files: CoursewareSelection[] }
+export interface CoursewareBatch { course: Course; files: CoursewareSelection[]; cacheScope?: string }
 export type CoursewareResult = { selection: CoursewareSelection; path: string; error?: never } | { selection: CoursewareSelection; path?: never; error: string };
 export interface CoursewareReport { batch: CoursewareBatch; results: CoursewareResult[] }
 interface HandoffRecord { batch: CoursewareBatch; expiresAt: number }
@@ -102,10 +103,12 @@ export function useCoursewareDownload(canHandOff: boolean, removeSelections?: (s
       directory.current = root;
       const results: CoursewareResult[] = previous?.results.filter(/** 重试时保留已经保存的文件，不再次请求。 */ function saved(result) { return result.path !== undefined; }) ?? [];
       const wholeBatch = previous?.batch ?? batch;
+      const remembered: Promise<void>[] = [];
       setReport({ batch: wholeBatch, results: [...results] }); setStage('saving');
 
       let sessionError = '';
-      try { await validateCoursewareDownload(batch.course); }
+      let schoolTabId: number | undefined;
+      try { schoolTabId = await validateCoursewareDownload(batch.course, batch.cacheScope); }
       catch (error) {
         sessionError = friendlyError(error);
         if (!controller.signal.aborted) {
@@ -118,8 +121,14 @@ export function useCoursewareDownload(canHandOff: boolean, removeSelections?: (s
         if (sessionError) results.push({ selection, error: sessionError });
         else {
           try {
-            const path = await saveCoursewareFile(root, batch.course.code, selection, controller.signal);
+            const path = await saveCoursewareFile(root, batch.course, selection, controller.signal, schoolTabId);
             if (controller.signal.aborted) return;
+            const extension = coursewareFileExtension(path);
+            if (batch.cacheScope && extension) {
+              remembered.push(rememberCoursewareFormat(batch.course, selection.file.url, extension, batch.cacheScope).catch(
+                /** 文件已经写入磁盘，缓存失败不改变下载结果。 */ function ignoreCacheFailure() {},
+              ));
+            }
             results.push({ selection, path });
             removeSelections?.([selection]);
             onSaved?.(selection, path);
@@ -135,6 +144,7 @@ export function useCoursewareDownload(canHandOff: boolean, removeSelections?: (s
         }
         setReport({ batch: wholeBatch, results: [...results] });
       }
+      await Promise.all(remembered);
     } catch {
       if (!controller.signal.aborted) setNotice({ message: '无法在扩展标签页继续，请重新选择并重试。', error: true });
     } finally {
@@ -147,7 +157,7 @@ export function useCoursewareDownload(canHandOff: boolean, removeSelections?: (s
   function retry(): void {
     if (!report) return;
     const files = report.results.flatMap(/** 从逐项结果挑出仍需重试的文件。 */ function failed(result) { return result.error ? [result.selection] : []; });
-    void start({ course: report.batch.course, files }, report);
+    void start({ ...report.batch, files }, report);
   }
 
   return { stage, report, notice, needsReload, start, retry };

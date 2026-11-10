@@ -53,7 +53,9 @@ try {
   await panel.screenshot({ path: 'artifacts/browser-smoke/runtime-mismatch.png' });
   await writeFile(path.join(extension, 'background.js'), currentWorker);
   const restarted = context.waitForEvent('serviceworker');
-  await reload.click();
+  await reload.click().catch(/** 重载会关闭旧侧栏，若点击确认迟到，仍由新后台事件验证操作成功。 */ function allowReloadClose(error) {
+    if (!panel.isClosed() || !/Target page, context or browser has been closed/.test(error.message)) throw error;
+  });
   const worker = await restarted;
   /** 只核对虚构标志位，不提取真实凭据。 */
   assert.equal(await worker.evaluate(async function preserved() { return (await chrome.storage.local.get('upgradeFixture')).upgradeFixture; }), 'preserved');

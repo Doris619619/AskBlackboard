@@ -64,6 +64,7 @@
 .courseware-file { cursor: pointer; }
 .courseware-file input { min-height: 0; width: 17px; height: 17px; flex: 0 0 auto; margin: 0 3px; accent-color: var(--accent); }
 .courseware-file span { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.courseware-format { display: block; font-size: var(--type-caption); }
 .courseware-file:has(input:disabled) { cursor: default; }
 .courseware-back { display: flex; flex-wrap: wrap; gap: 0 14px; margin: -8px 0 4px; }
 .courseware-back > button, .courseware-select-all { font-size: var(--type-subhead); }
