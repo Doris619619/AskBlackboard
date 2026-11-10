@@ -11,6 +11,7 @@ import {
   unsupportedCoursewareLandingPath, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes,
 } from '../tests/browser/fixtures.mjs';
 import { runCoursewareSmoke } from './browser-courseware-smoke.mjs';
+import { runCourseDiscoverySmoke } from './browser-discovery-smoke.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
 await mkdir(output, { recursive: true });
@@ -32,6 +33,8 @@ let announcementReads = 0;
 let modelCalls = 0;
 let unsafeRequests = 0;
 let assignmentReads = 0;
+let authorizationReads = 0;
+let delayAuthorization = false;
 const coursewareState = { files: [], entries: [], directoryReads: 0, unsafeRedirectRequested: false, failDirectory: true, failTutorial: true, loginExpired: false };
 const coursewareRedirects = new Map([
   [coursewareCourseId, coursewareLanding],
@@ -53,6 +56,12 @@ async function schoolRoute(route) {
   const address = `${url.pathname}${url.search}`;
   const courseMenu = url.pathname.endsWith('/announcement') && url.searchParams.get('context') === 'course_entry';
   if (courseMenu || /\/(?:tabAction|courseMain|modulepage\/view|listContent\.jsp)$/.test(url.pathname)) coursewareState.directoryReads += 1;
+  if (url.href === portalUrl && !request.isNavigationRequest()) {
+    authorizationReads += 1;
+    if (delayAuthorization) {
+      await new Promise(/** 让同轮公告和作业授权请求稳定重叠。 */ function overlap(resolve) { setTimeout(resolve, 300); });
+    }
+  }
   if (url.pathname === lectureFilePath || url.pathname === tutorialFilePath) {
     coursewareState.files.push(url.pathname);
     if (url.pathname === tutorialFilePath && coursewareState.failTutorial) return route.fulfill({ status: 503, body: 'test-only' });
@@ -134,6 +143,7 @@ try {
   const worker = context.serviceWorkers()[0] || await context.waitForEvent('serviceworker');
   const id = new URL(worker.url()).hostname;
   const school = context.pages()[0];
+  await runCourseDiscoverySmoke(context, worker, school, `chrome-extension://${id}/sidepanel.html`, passed);
   await school.goto(portalUrl);
   panel = await context.newPage();
   /** 捕获页面运行错误，只保留消息，不记录请求头、存储或表单值。 */
@@ -143,8 +153,12 @@ try {
   assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '');
   passed('actual extension worker + content script discover course');
 
+  const beforeDeadlineAuthorization = authorizationReads;
+  delayAuthorization = true;
   await ask('GED2005最新的作业在啥时候截止');
   await panel.locator('.deadline-quote').filter({ hasText: 'The deadline is 21:30, 22 Nov 2026.' }).waitFor();
+  delayAuthorization = false;
+  assert.equal(authorizationReads - beforeDeadlineAuthorization, 1);
   assert.equal(modelCalls, 0);
   assert.equal(assignmentReads, 2);
   assert.equal(await panel.getByRole('dialog').count(), 0);
@@ -168,8 +182,13 @@ try {
   passed('assignment evidence opens and highlights a read-only list, never a submission endpoint');
   await panel.reload(); await visible('已连接 Blackboard');
 
+  const beforeReportAuthorization = authorizationReads;
+  delayAuthorization = true;
   await ask('ece3810的report1的ddl是啥时候');
   await panel.locator('.deadline-time').filter({ hasText: '2026年11月19日 20:00' }).waitFor();
+  delayAuthorization = false;
+  assert.equal(authorizationReads - beforeReportAuthorization, 1);
+  passed('parallel deadline reads share one live portal check and the next question validates again');
   assert.equal(await panel.locator('.deadline-item').count(), 2);
   assert.equal(await panel.getByLabel('选择课程和教学班').inputValue(), '_703_1');
   assert.equal(modelCalls, 0);
@@ -310,12 +329,15 @@ try {
 
   loggedIn = false;
   const callsBeforeLoginFailure = modelCalls;
+  const beforeLoginAuthorization = authorizationReads;
   await ask('Quiz 1 是什么时候？');
   await visible('登录');
   assert.equal(modelCalls, callsBeforeLoginFailure);
+  assert.equal(authorizationReads - beforeLoginAuthorization, 1);
   loggedIn = true;
   await panel.locator('.conversation-turn').last().getByRole('button', { name: '重试读取' }).click();
   await panel.locator('.conversation-turn').last().getByText(found.answer, { exact: true }).waitFor();
+  assert.equal(authorizationReads - beforeLoginAuthorization, 2);
   passed('expired login does not call model and recovers after retry');
   await panel.setViewportSize({ width: 390, height: 844 });
   await panel.getByLabel('选择课程和教学班').selectOption('_700_1');

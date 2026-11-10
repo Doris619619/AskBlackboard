@@ -18,6 +18,7 @@ async function handleMessage(raw: unknown): Promise<unknown> {
     case 'ping': return true;
     case 'read_discovery': return readCourseDiscovery();
     case 'read_discovery_page':
+      if (/login|signon|sso/i.test(location.pathname)) throw new AppError('login_required', '请在 Blackboard 页面正常登录，再回来查询。');
       if (!isPortalUrl(location.href)) throw new AppError('unsupported_page', '当前页面不是学生课程门户。');
       return parseCourseDiscovery(document, location.href);
     case 'read_announcements':

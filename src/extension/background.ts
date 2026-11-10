@@ -11,8 +11,12 @@ import { readCourseAssignments, type AssignmentPage } from '../blackboard/assign
 import { coursewarePageUrl } from '../blackboard/courseware-policy';
 import type { CoursewareListing } from '../shared/courseware-types';
 import { readCoursewareWithRedirects } from './courseware-redirect';
+import { shareCourseAuthorization } from './course-authorization';
 
 const TAB_TIMEOUT_MS = 20000;
+const CONTENT_RETRY_MS = 2200;
+const CONTENT_POLL_MS = 200;
+const DISCOVERY_BACKUP_DELAY_MS = 1000;
 
 /** 延迟一次短暂的内容脚本就绪检查；不建立后台常驻轮询。 */
 function delay(milliseconds: number): Promise<void> {
@@ -49,43 +53,64 @@ async function waitForTab(tabId: number): Promise<void> {
   return new Promise(subscribe);
 }
 
-/** 将受控消息交给已有内容脚本；脚本未注入时短暂重试，业务错误保持原代码。 */
-async function sendContent<T>(tabId: number, message: ContentMessage): Promise<T> {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+/** 将受控消息交给内容脚本，按目标页面的就绪时限重试，业务错误保持原代码。 */
+async function sendContent<T>(tabId: number, message: ContentMessage, retryMs = CONTENT_RETRY_MS, signal?: AbortSignal): Promise<T> {
+  const started = Date.now();
+  const deadline = started + retryMs;
+  for (;;) {
+    signal?.throwIfAborted();
     let result: RuntimeResult<T>;
     try { result = await chrome.tabs.sendMessage(tabId, message); } catch {
-      if (attempt === 11) throw new AppError('content_unavailable', 'Blackboard 页面尚未连接扩展，请刷新学校页面后重试。');
-      await delay(200);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new AppError('content_unavailable', 'Blackboard 页面尚未连接扩展，请刷新学校页面后重试。');
+      // 给刚创建的门户留出导航时间，随后可以及早识别已关闭或加载失败的页。
+      if (message.type === 'read_discovery_page' && Date.now() - started >= 2 * CONTENT_POLL_MS) {
+        let tab: chrome.tabs.Tab;
+        try { tab = await chrome.tabs.get(tabId); }
+        catch { throw new AppError('tab_closed', 'Blackboard 课程门户已关闭，请重试。'); }
+        if (tab.status === 'complete' && !tab.pendingUrl) throw new AppError('content_unavailable', '无法连接 Blackboard 课程门户，请确认已登录后重试。');
+      }
+      await delay(Math.min(CONTENT_POLL_MS, remaining));
       continue;
     }
     if (!result || !result.ok) throw new AppError(result?.ok === false ? result.error.code : 'content_unavailable', result?.ok === false ? result.error.message : 'Blackboard 页面尚未连接扩展，请刷新学校页面后重试。');
     return result.data;
   }
-  throw new AppError('content_unavailable', '无法连接 Blackboard 内容脚本。');
 }
 
-/** 优先选择门户或公告标签页；不存在学校标签页时为用户打开正常登录入口。 */
-async function blackboardTab(): Promise<number> {
+/** 查找可用的学校标签页，优先门户和公告页，避免选中已被浏览器卸载的标签页。 */
+async function findBlackboardTab(): Promise<chrome.tabs.Tab | undefined> {
   const tabs = await chrome.tabs.query({ url: `${BLACKBOARD_ORIGIN}/*` });
   /** 优先已打开的门户，其次公告；不会导航或读取现有作答、提交页 DOM。 */
   function order(left: chrome.tabs.Tab, right: chrome.tabs.Tab): number {
     const leftSafe = isPortalUrl(left.url ?? '') ? 2 : left.url?.includes('/execute/announcement') ? 1 : 0;
     const rightSafe = isPortalUrl(right.url ?? '') ? 2 : right.url?.includes('/execute/announcement') ? 1 : 0;
-    return rightSafe - leftSafe || Number(right.active) - Number(left.active);
+    return Number(left.discarded) - Number(right.discarded) || rightSafe - leftSafe || Number(right.active) - Number(left.active);
   }
-  const existing = tabs.sort(order)[0];
-  if (existing?.id !== undefined) return existing.id;
+  return tabs.sort(order)[0];
+}
+
+/** 打开正常门户供用户登录，交由调用方按操作所需等待页面。 */
+async function openBlackboardPortal(): Promise<number> {
   const created = await chrome.tabs.create({ url: PORTAL_URL, active: true });
   if (created.id === undefined) throw new AppError('tab_unavailable', '无法打开 Blackboard，请手动打开学校首页。');
-  await waitForTab(created.id);
   return created.id;
+}
+
+/** 取得用于资料操作的学校标签页，无学校页时打开登录门户并等待加载。 */
+async function blackboardTab(): Promise<number> {
+  const existing = await findBlackboardTab();
+  if (existing?.id !== undefined) return existing.id;
+  const id = await openBlackboardPortal();
+  await waitForTab(id);
+  return id;
 }
 
 /** 判断需用户正常登录或同意学校条款的失败，备用传输不能绕过这些页面。 */
 function requiresUserAction(error: unknown): boolean { return error instanceof AppError && ['login_required', 'consent_required', 'unsafe_url', 'invalid_course', 'account_unknown'].includes(error.code); }
 
-/** 创建属于本轮的备用标签页，读取完成即关闭，只处理经过校验的学校只读地址。 */
-async function fallbackTab<T>(url: string, operation: (tabId: number) => Promise<T>): Promise<T> {
+/** 创建属于本轮的备用标签页，只接受校验过的只读地址并在本轮结束时关闭。 */
+async function fallbackTab<T>(url: string, operation: (tabId: number) => Promise<T>, waitForLoad = true): Promise<T> {
   if (!isPortalUrl(url)) {
     const target = new URL(url);
     if (target.searchParams.has('course_id') && target.pathname !== '/webapps/blackboard/execute/announcement') assignmentReadUrl(url, target.searchParams.get('course_id')!);
@@ -93,14 +118,17 @@ async function fallbackTab<T>(url: string, operation: (tabId: number) => Promise
   }
   const tab = await chrome.tabs.create({ url, active: false });
   if (tab.id === undefined) throw new AppError('tab_unavailable', '无法打开专用资料读取页面。');
-  try { await waitForTab(tab.id); return await operation(tab.id); }
+  try {
+    if (waitForLoad) await waitForTab(tab.id);
+    return await operation(tab.id);
+  }
   finally { try { await chrome.tabs.remove(tab.id); } catch { /* 用户已经关闭专用页时无需重建或关闭其他页面。 */ } }
 }
 
 /** 动态页面可能晚于加载事件呈现，仅在专用页短暂重读，不点击条款或页面控件。 */
-async function readRendered<T>(tabId: number, message: ContentMessage): Promise<T> {
+async function readRendered<T>(tabId: number, message: ContentMessage, retryMs = CONTENT_RETRY_MS, signal?: AbortSignal): Promise<T> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    try { return await sendContent<T>(tabId, message); } catch (error) {
+    try { return await sendContent<T>(tabId, message, retryMs, signal); } catch (error) {
       if (!(error instanceof AppError) || !['unsupported_page', 'courses_not_found', 'page_loading'].includes(error.code) || attempt === 7) throw error;
       await delay(350);
     }
@@ -108,21 +136,72 @@ async function readRendered<T>(tabId: number, message: ContentMessage): Promise<
   throw new AppError('unsupported_page', 'Blackboard 页面没有完成数据加载。');
 }
 
+/** 门户 DOM 准备好即可读完整课程列表，图片仍在加载时也可返回。 */
+function readPortalDiscovery(tabId: number, signal?: AbortSignal): Promise<CourseDiscovery> {
+  return readRendered(tabId, { type: 'read_discovery_page' }, TAB_TIMEOUT_MS, signal);
+}
+
+/** 已加载的旧标签页若没有接收器，立即交给备用门户。 */
+async function readDiscoveryFromTab(tabId: number): Promise<CourseDiscovery> {
+  const tab = await chrome.tabs.get(tabId);
+  return sendContent(tabId, { type: 'read_discovery' }, tab.status === 'complete' ? 0 : CONTENT_RETRY_MS);
+}
+
+/** 只为侧栏列表并行尝试两个新读取，返回先验证通过的课程目录。 */
+async function discoverForSidebar(): Promise<CourseDiscovery> {
+  const tab = await findBlackboardTab();
+  if (tab?.id === undefined) return readPortalDiscovery(await openBlackboardPortal());
+  const backupController = new AbortController();
+  /** 读取本轮新打开的门户，保留原有 Blackboard 标签页。 */
+  function readBackup(): Promise<CourseDiscovery> {
+    /** 在课程模块就绪或本轮已经结束时停止等待。 */
+    function read(id: number): Promise<CourseDiscovery> { return readPortalDiscovery(id, backupController.signal); }
+    return fallbackTab(PORTAL_URL, read, false);
+  }
+  /** 保留请求来源，失败后可以等待尚未完成的另一条路径。 */
+  async function probe(read: Promise<CourseDiscovery>, route: 'fetch' | 'portal') {
+    try { return { ok: true as const, data: await read }; }
+    catch (error) { return { ok: false as const, error, route }; }
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  /** 仅在初始请求尚未返回时启动备用门户。 */
+  function scheduleBackup(resolve: (value: undefined) => void): void { timer = setTimeout(resolve, DISCOVERY_BACKUP_DELAY_MS, undefined); }
+  try {
+    const primary = probe(readDiscoveryFromTab(tab.id), 'fetch');
+    const first = await Promise.race([primary, new Promise<undefined>(scheduleBackup)]);
+    if (first?.ok) return first.data;
+    if (first) {
+      if (requiresUserAction(first.error)) throw first.error;
+      return await readBackup();
+    }
+    const backup = probe(readBackup(), 'portal');
+    const fastest = await Promise.race([primary, backup]);
+    if (fastest.ok) return fastest.data;
+    if (requiresUserAction(fastest.error)) throw fastest.error;
+    const other = await (fastest.route === 'fetch' ? backup : primary);
+    if (other.ok) return other.data;
+    throw requiresUserAction(other.error) || other.route === 'portal' ? other.error : fastest.error;
+  } finally {
+    clearTimeout(timer);
+    backupController.abort();
+  }
+}
+
 /** 用同一张可用标签页校验课程并完成操作，临时门户保留到操作结束。 */
 async function withDiscoveryTab<T>(tabId: number, operation: (id: number, discovery: CourseDiscovery) => T | Promise<T>): Promise<T> {
   /** 从临时门户读取当前账号，并在关闭页面前完成本轮操作。 */
   async function readPortal(id: number): Promise<T> {
-    const discovery = await readRendered<CourseDiscovery>(id, { type: 'read_discovery_page' });
+    const discovery = await readPortalDiscovery(id);
     return operation(id, discovery);
   }
   let discovery: CourseDiscovery;
-  try { discovery = await sendContent<CourseDiscovery>(tabId, { type: 'read_discovery' }); } catch (error) {
+  try { discovery = await readDiscoveryFromTab(tabId); } catch (error) {
     if (requiresUserAction(error)) throw error;
-    return fallbackTab(PORTAL_URL, readPortal);
+    return fallbackTab(PORTAL_URL, readPortal, false);
   }
   try { return await operation(tabId, discovery); } catch (error) {
     if (!(error instanceof AppError) || !['content_unavailable', 'tab_closed'].includes(error.code)) throw error;
-    return fallbackTab(PORTAL_URL, readPortal);
+    return fallbackTab(PORTAL_URL, readPortal, false);
   }
 }
 
@@ -139,10 +218,11 @@ function requireCurrentCourse(discovery: CourseDiscovery, requested: Course): Co
   throw new AppError('course_changed', '当前账号、学期或课程列表已变化，请重新选择课程。');
 }
 
-/** 读取当前课程目录并确认该课程仍可访问，供独立校验和已有查询入口复用。 */
-async function currentCourse(tabId: number, requested: Course): Promise<Course> {
+/** 确认课程仍可访问。并行问答可合并正在进行的门户校验，保存前独立读取。 */
+async function currentCourse(tabId: number, requested: Course, shareInFlight = true): Promise<Course> {
   announcementUrl(requested.announcementUrl, requested.courseId);
-  return requireCurrentCourse(await discover(tabId), requested);
+  const discovery = await (shareInFlight ? shareCourseAuthorization(tabId, discover) : discover(tabId));
+  return requireCurrentCourse(discovery, requested);
 }
 
 /** 用本轮专用标签页逐页读取渲染后的公告；不会改动学生已经打开的页面。 */
@@ -254,7 +334,7 @@ async function handleMessage(raw: unknown): Promise<unknown> {
   const message = raw as ExtensionMessage;
   switch (message.type) {
     case 'ping': return { protocol: RUNTIME_PROTOCOL };
-    case 'discover_courses': return discover(await blackboardTab());
+    case 'discover_courses': return discoverForSidebar();
     case 'collect_announcements': {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请重新读取课程列表。');
       const tabId = await blackboardTab();
@@ -278,7 +358,7 @@ async function handleMessage(raw: unknown): Promise<unknown> {
     }
     case 'validate_courseware_download': {
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请刷新课程。');
-      await currentCourse(await blackboardTab(), message.course);
+      await currentCourse(await blackboardTab(), message.course, false);
       return undefined;
     }
     case 'open_source': return openSource(message.source, message.quote);
