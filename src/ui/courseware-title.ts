@@ -1,5 +1,7 @@
-/** 文件用途：生成课件侧栏的课程标题，保留选课与权限校验所需的原始数据。 */
+/** 文件用途：生成课件界面的课程和文件标题，保留读取与保存所需的原始数据。 */
+import { coursewareFileExtension } from '../blackboard/courseware-policy';
 import { normalizeCourseCode } from '../blackboard/policy';
+import type { CoursewareFile } from '../shared/courseware-types';
 import type { Course } from '../shared/types';
 
 const coursePrefix = /^([A-Z]{2,8}[\s_-]*\d{3,5}[A-Z]?)(?=$|[\s:：_\-–—])/i;
@@ -14,4 +16,14 @@ export function coursewareTitle(course: Pick<Course, 'code' | 'title'>): string 
     ? title.slice(prefix[0].length).trim().replace(/^[:：_\-–—]\s*/, '')
     : title;
   return code && name ? `${code}: ${name}` : code || name;
+}
+
+/** 用已知后缀补全标题。实际保存的后缀优先，已有的同格式后缀保留原大小写。 */
+export function coursewareFileLabel(file: CoursewareFile, savedExtension?: string): string {
+  const extension = savedExtension ?? file.extension;
+  if (!extension) return file.name;
+  const original = coursewareFileExtension(file.name);
+  if (original === extension) return file.name;
+  const name = file.name.trimEnd();
+  return `${original ? name.slice(0, -original.length - 1) : name}.${extension}`;
 }

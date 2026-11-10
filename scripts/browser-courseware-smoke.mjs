@@ -118,6 +118,7 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   await content.click();
   await panel.getByRole('button', { name: 'Lecture', exact: true }).click();
   await panel.getByRole('checkbox', { name: 'Week 01.pdf', exact: true }).check();
+  assert.equal(await panel.getByRole('checkbox', { name: 'Week 01', exact: true }).count(), 0);
   assert.equal(await panel.getByText('Assignment.pdf', { exact: true }).count(), 0);
   const readsBeforeBack = state.directoryReads;
   const back = panel.getByRole('button', { name: '返回上一层', exact: true });
@@ -142,6 +143,8 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   assert.deepEqual(state.files, []);
   state.failDirectory = false;
   await retryDirectory.click();
+  await panel.getByRole('checkbox', { name: 'Tutorial 01', exact: true }).waitFor();
+  assert.equal(await panel.getByRole('checkbox', { name: 'Tutorial 01.ppt', exact: true }).count(), 0);
   await panel.getByRole('checkbox', { name: '全选当前目录', exact: true }).check();
   assert.deepEqual(state.files, []);
   passed('courseware browses historical courses and retries teacher folders without requesting file bytes');
@@ -178,6 +181,8 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   await assertSavedFiles(panel);
   assert.deepEqual(state.files, [lectureFilePath, tutorialFilePath, tutorialFilePath]);
   assert.equal(await panel.evaluate(function pickerCallCount() { return window.coursewarePickerCalls; }), 2);
+  await panel.getByRole('checkbox', { name: 'Tutorial 01.ppt', exact: true }).waitFor();
+  passed('courseware shows known filename suffixes immediately and confirms an opaque XID after saving');
   await panel.screenshot({ path: path.join(output, 'courseware-saved.png') });
   passed('courseware batch saves original bytes in teacher folders, preserves existing file and retries only failed file');
 

@@ -4,6 +4,7 @@ import { reloadExtension } from '../shared/browser-client';
 import type { CoursewareSelection } from '../shared/courseware-types';
 import { Icon } from './icons';
 import { coursewareSelectionKey, takeCoursewareBatch, useCoursewareDownload, type CoursewareBatch, type CoursewareReport } from './courseware-download-flow';
+import { coursewareFileLabel } from './courseware-title';
 
 /** 计算本批已保存与失败的数量；尚未处理的文件不算失败。 */
 function summarize(report: CoursewareReport) {
@@ -13,7 +14,7 @@ function summarize(report: CoursewareReport) {
 
 /** 保留可见目录名，使不同目录中的同名文件能在下载结果里区分。 */
 function visiblePath(selection: CoursewareSelection): string {
-  return [...selection.folders.map(/** 仅显示老师设置的原始名称。 */ function folderName(folder) { return folder.name; }), selection.file.name].join(' / ');
+  return [...selection.folders.map(/** 保留老师设置的目录名称。 */ function folderName(folder) { return folder.name; }), coursewareFileLabel(selection.file)].join(' / ');
 }
 
 /** 在文件列表上方保留每项的落盘路径或安全的失败说明。 */

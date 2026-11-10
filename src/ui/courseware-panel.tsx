@@ -1,5 +1,6 @@
 /** 文件用途：按学期和教师目录浏览课件，并在同一课程的目录之间保留勾选。 */
 import { useEffect, useRef, useState } from 'react';
+import { coursewareFileExtension } from '../blackboard/courseware-policy';
 import { collectCourseware, reloadExtension } from '../shared/browser-client';
 import type { CoursewareFolder, CoursewareListing, CoursewareSelection } from '../shared/courseware-types';
 import { AppError, friendlyError } from '../shared/errors';
@@ -7,7 +8,7 @@ import type { Course, CourseDiscovery } from '../shared/types';
 import { Icon } from './icons';
 import { coursewareSelectionKey, useCoursewareDownload } from './courseware-download-flow';
 import { CoursewareDownloadResults, CoursewareDownloadStatus } from './courseware-download-page';
-import { coursewareTitle } from './courseware-title';
+import { coursewareFileLabel, coursewareTitle } from './courseware-title';
 
 interface PanelProps {
   hidden: boolean;
@@ -39,11 +40,6 @@ function groupCourses(discovery: CourseDiscovery | null) {
   const current = groups.get(discovery.currentTermId);
   groups.delete(discovery.currentTermId);
   return current ? [[discovery.currentTermId, current] as const, ...groups] : [...groups];
-}
-
-/** 从可见文件名标记类型；无后缀时留给下载响应确定格式。 */
-function fileType(name: string): string | undefined {
-  return /\.([a-z\d]{1,8})$/i.exec(name)?.[1]?.toUpperCase();
 }
 
 /** 使用问答已发现的可见课程，但以独立状态浏览课件及学期。 */
@@ -123,9 +119,10 @@ function CoursewareDiagnostic({ diagnostic }: { diagnostic: string }) {
 function CoursewareCourse({ course, returnToCourses }: { course: Course; returnToCourses: () => void }) {
   const [pages, setPages] = useState<DirectoryPage[]>([{}]);
   const [selection, setSelection] = useState<Map<string, CoursewareSelection>>(new Map());
+  const [savedExtensions, setSavedExtensions] = useState<Map<string, string>>(new Map());
   const heading = useRef<HTMLHeadingElement>(null);
   const selectAll = useRef<HTMLInputElement>(null);
-  const download = useCoursewareDownload(true, removeSelections);
+  const download = useCoursewareDownload(true, removeSelections, rememberSavedExtension);
   const page = pages.at(-1)!;
   const { folder, listing } = page;
   const folders = pages.flatMap(/** 使用当前路径上的教师栏目构建选择。 */ function directory(item) { return item.folder ? [item.folder] : []; });
@@ -178,6 +175,15 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
   /** 根据已提交保存或已交接的条目更新勾选，避免连续点击生成副本。 */
   function removeSelections(items: CoursewareSelection[]) { updateSelection(items, false); }
 
+  /** 成功保存后，在当前课程内补上实际落盘的文件格式。 */
+  function rememberSavedExtension(item: CoursewareSelection, path: string) {
+    const extension = coursewareFileExtension(path);
+    if (!extension) return;
+    setSavedExtensions(/** 保留本次浏览中其他已确认的格式。 */ function remember(previous) {
+      return previous.get(item.file.id) === extension ? previous : new Map(previous).set(item.file.id, extension);
+    });
+  }
+
   /** 只改变指定项目的勾选，保留其他已浏览目录中的选择。 */
   function updateSelection(items: CoursewareSelection[], checked: boolean) {
     setSelection(/** 根据最新勾选合并增量，下载回调不会覆盖刚发生的其他更新。 */ function apply(previous) {
@@ -224,10 +230,10 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
         {entries.map(/** 保留目录页面的项目顺序，目录打开与文件勾选使用各自的原生控件。 */ function renderEntry(item) {
           if (item.kind === 'folder') return <li key={item.id}><button type="button" className="courseware-entry" disabled={busy || folders.some(/** 避免重复进入祖先链接。 */ function isAncestor(ancestor) { return ancestor.id === item.id; })} onClick={/** 保留父目录并进入所选子目录。 */ function openFolder() { setPages([...pages, { folder: item }]); }}><span>{item.name}</span><Icon name="chevron" /></button></li>;
           const choice = { file: item, folders };
-          const format = fileType(item.name);
+          const label = coursewareFileLabel(item, savedExtensions.get(item.id));
           return <li key={item.id}><label className="courseware-file">
-            <input type="checkbox" aria-label={item.name} checked={selection.has(coursewareSelectionKey(choice))} disabled={busy} onChange={/** 只修改当前文件的选择。 */ function toggleFile(event) { updateSelection([choice], event.target.checked); }} />
-            <span>{item.name}</span>{format && <small>{format}</small>}
+            <input type="checkbox" aria-label={label} checked={selection.has(coursewareSelectionKey(choice))} disabled={busy} onChange={/** 只修改当前文件的选择。 */ function toggleFile(event) { updateSelection([choice], event.target.checked); }} />
+            <span>{label}</span>
           </label></li>;
         })}
       </ul>}

@@ -58,8 +58,8 @@ export function coursewarePage(url) {
   const contentId = url.searchParams.get('content_id');
   const listing = {
     _960_1: `<li><h3><a href="${folder('_961_1')}">Lecture</a></h3></li>`,
-    _961_1: `<li><h3><a href="${lectureFilePath}">Week 01.pdf</a></h3></li><li><h3><a href="${unselectedFilePath}">Unselected.pdf</a></h3><div class="vtbegenerated"><img src="${unselectedFilePath}" alt=""><iframe src="${unselectedFilePath}"></iframe></div></li><li><img class="item_icon" alt="Assignment"><h3><a href="/webapps/assignment/uploadAssignment">Assignment</a></h3><div class="attachments"><a href="${assignmentAttachmentPath}">Assignment.pdf</a></div></li>`,
-    _962_1: `<li><h3><a href="${tutorialFilePath}">Tutorial 01.ppt</a></h3></li>`,
+    _961_1: `<li><h3><a href="${lectureFilePath}" download="Week 01.pdf">Week 01</a></h3></li><li><h3><a href="${unselectedFilePath}">Unselected.pdf</a></h3><div class="vtbegenerated"><img src="${unselectedFilePath}" alt=""><iframe src="${unselectedFilePath}"></iframe></div></li><li><img class="item_icon" alt="Assignment"><h3><a href="/webapps/assignment/uploadAssignment">Assignment</a></h3><div class="attachments"><a href="${assignmentAttachmentPath}">Assignment.pdf</a></div></li>`,
+    _962_1: `<li><img class="item_icon" alt="File"><h3><a href="${tutorialFilePath}">Tutorial 01</a></h3></li>`,
   }[contentId];
   if (listing === undefined) return undefined;
   return `<div id="breadcrumbs"><a href="/webapps/blackboard/execute/courseMain?course_id=${coursewareCourseId}">Example Course</a></div><ul id="content_listContainer">${listing}</ul>`;

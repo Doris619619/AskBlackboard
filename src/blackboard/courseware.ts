@@ -3,7 +3,7 @@ import { AppError } from '../shared/errors';
 import type { CoursewareFile, CoursewareFolder, CoursewareListing } from '../shared/courseware-types';
 import type { Course } from '../shared/types';
 import { assignmentReadUrl, CONTENT_PATH, COURSE_PATH } from './assignment-policy';
-import { COURSEWARE_REDIRECT_MESSAGE, coursewareFileUrl, coursewarePageUrl, isCoursewareFilename } from './courseware-policy';
+import { COURSEWARE_REDIRECT_MESSAGE, coursewareFileExtension, coursewareFileUrl, coursewarePageUrl } from './courseware-policy';
 import { assertReadableDocument, parseHtml, plainText } from './dom';
 
 export { coursewarePageUrl } from './courseware-policy';
@@ -40,15 +40,20 @@ function folderLink(link: Element, page: URL, course: Course): CoursewareFolder 
   } catch { return undefined; }
 }
 
-/** 将课件标题或附件链接转换为文件元信息，此处不读取文件响应或推断格式。 */
+/** 保留课件标题并从页面提供的文件名提取后缀，XID 和通用图标不表示格式。 */
 function fileLink(link: Element, page: URL): CoursewareFile | undefined {
   const href = link.getAttribute('href');
   if (!href) return undefined;
   try {
     const target = coursewareFileUrl(href, page.href);
     const last = decodeURIComponent(target.pathname.split('/').at(-1) ?? '');
-    const name = linkName(link) || (isCoursewareFilename(last) ? last : '');
-    return name ? { kind: 'file', id: target.href, name, url: target.href } : undefined;
+    const urlExtension = coursewareFileExtension(last);
+    const name = linkName(link) || (urlExtension ? last : '');
+    if (!name) return undefined;
+    const extension = urlExtension
+      ?? coursewareFileExtension(link.getAttribute('download') ?? '')
+      ?? coursewareFileExtension(name);
+    return { kind: 'file', id: target.href, name, url: target.href, extension };
   } catch { return undefined; }
 }
 

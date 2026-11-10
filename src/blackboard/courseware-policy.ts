@@ -12,6 +12,11 @@ export const COURSEWARE_REDIRECT_MESSAGE = '无法确认课件目录的跳转目
 /** 判断可保存的课件格式；目录页没有文件名的 XID 链接还需由响应确认格式。 */
 export function isCoursewareFilename(name: string): boolean { return fileSuffix.test(name.trim()); }
 
+/** 从已知文件名提取小写后缀，只返回课件支持的格式。 */
+export function coursewareFileExtension(name: string): string | undefined {
+  return fileSuffix.exec(name.trim())?.[0].slice(1).toLowerCase();
+}
+
 /** 构建固定的同课程公告入口，课件读取只使用其教师菜单。 */
 export function coursewareMenuUrl(courseId: string): URL {
   if (!/^_\d+_\d+$/.test(courseId)) throw new AppError('course_mismatch', '课件页面与所选课程不一致。');

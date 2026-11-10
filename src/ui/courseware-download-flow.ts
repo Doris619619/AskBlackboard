@@ -55,8 +55,8 @@ export function coursewareSelectionKey(selection: CoursewareSelection): string {
   return JSON.stringify([...selection.folders.map(/** 保留当前栏目路径的稳定标识。 */ function folderId(folder) { return folder.id; }), selection.file.id]);
 }
 
-/** 在有用户点击的上下文选目录和下载，重试时只请求失败项并继续使用已授权目录。 */
-export function useCoursewareDownload(canHandOff: boolean, removeSelections?: (selections: CoursewareSelection[]) => void) {
+/** 选择目录后保存，逐项报告落盘路径；重试沿用已授权目录且只请求失败项。 */
+export function useCoursewareDownload(canHandOff: boolean, removeSelections?: (selections: CoursewareSelection[]) => void, onSaved?: (selection: CoursewareSelection, path: string) => void) {
   const [stage, setStage] = useState<'idle' | 'picking' | 'saving'>('idle');
   const [report, setReport] = useState<CoursewareReport | null>(null);
   const [notice, setNotice] = useState<DownloadNotice | null>(null);
@@ -122,6 +122,7 @@ export function useCoursewareDownload(canHandOff: boolean, removeSelections?: (s
             if (controller.signal.aborted) return;
             results.push({ selection, path });
             removeSelections?.([selection]);
+            onSaved?.(selection, path);
           } catch (error) {
             if (controller.signal.aborted) return;
             const explanation = friendlyError(error);

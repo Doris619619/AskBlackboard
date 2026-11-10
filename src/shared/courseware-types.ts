@@ -11,6 +11,8 @@ export interface CoursewareFile {
   id: string;
   name: string;
   url: string;
+  /** 页面已提供的可识别文件后缀，不含点，统一为小写。 */
+  extension?: string;
 }
 
 export interface CoursewareListing {

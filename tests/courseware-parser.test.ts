@@ -54,6 +54,22 @@ describe('courseware metadata', () => {
     ]);
   });
 
+  it('identifies a listed extension from a WebDAV filename, download hint or file label without guessing for an opaque XID', () => {
+    const metadata = `<ul id="content_listContainer">
+      <li><h3><a href="${slides}">Slides for class</a></h3></li>
+      <li><h3><a href="${pdf}" download="Original.PDF">Lecture notes</a></h3></li>
+      <li><h3><a href="/bbcswebdav/xid-914_1">Reading.DOCX</a></h3></li>
+      <li><img class="item_icon" src="/images/ci/file_on.gif" alt="File"><h3><a href="/bbcswebdav/xid-915_1">Lecture 4</a></h3></li>
+    </ul>`;
+    const { items } = parseCoursewareListing(parseHtml(metadata), folderUrl, course, folderUrl);
+    expect(items).toMatchObject([
+      { name: 'Slides for class', extension: 'pptx' },
+      { name: 'Lecture notes', extension: 'pdf' },
+      { name: 'Reading.DOCX', extension: 'docx' },
+      { name: 'Lecture 4', extension: undefined },
+    ]);
+  });
+
   it('distinguishes an empty folder from unreadable, wrong-course, and wrong-folder pages', () => {
     expect(parseCoursewareListing(parseHtml('<ul id="content_listContainer"></ul>'), childUrl, course, childUrl)).toEqual({ items: [] });
     expect(() => parseCoursewareListing(parseHtml('<p>Unexpected page</p>'), folderUrl, course, folderUrl)).toThrow('未识别');
