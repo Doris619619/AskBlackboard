@@ -62,17 +62,19 @@ async function readCoursewareRoute(tabId: number, courseId: string, folderUrl: s
   throw new AppError('courseware_redirect', COURSEWARE_REDIRECT_MESSAGE);
 }
 
-/** 读取课件目录。课程根入口跳转无法确认时，另试同课程公告页的教师菜单。 */
+/** 课程根先读取同课程公告页的教师菜单，页面不可用时再核对课程入口跳转。 */
 export async function readCoursewareWithRedirects(tabId: number, courseId: string, folderUrl: string | undefined, readPage: (url: string) => Promise<CoursewareListing>): Promise<CoursewareListing> {
   const diagnostic = [`AskBlackboard 课件读取诊断（协议 ${RUNTIME_PROTOCOL}）`, folderUrl === undefined ? '范围：课程根目录' : '范围：课件子目录'];
   try {
-    try {
-      return await readCoursewareRoute(tabId, courseId, folderUrl, coursewarePageUrl(courseId, folderUrl), readPage, diagnostic);
-    } catch (error) {
-      if (!(error instanceof AppError) || error.code !== 'courseware_redirect' || folderUrl !== undefined) throw error;
-      diagnostic.push('改读同课程公告页的菜单。');
-      return await readCoursewareRoute(tabId, courseId, undefined, coursewareMenuUrl(courseId), readPage, diagnostic);
+    if (folderUrl === undefined) {
+      try {
+        return await readCoursewareRoute(tabId, courseId, undefined, coursewareMenuUrl(courseId), readPage, diagnostic);
+      } catch (error) {
+        if (!(error instanceof AppError) || !['unsupported_page', 'transport_error', 'courseware_redirect'].includes(error.code)) throw error;
+        diagnostic.push(`公告页菜单读取失败（${error.code}），改读课程入口。`);
+      }
     }
+    return await readCoursewareRoute(tabId, courseId, folderUrl, coursewarePageUrl(courseId, folderUrl), readPage, diagnostic);
   } catch (error) {
     if (!(error instanceof AppError)) throw error;
     diagnostic.push(`结果：${error.code}`);

@@ -19,6 +19,14 @@ interface PanelProps {
   refreshCourses: () => void;
 }
 
+interface DirectoryPage {
+  folder?: CoursewareFolder;
+  listing?: CoursewareListing;
+  error?: string;
+  diagnostic?: string;
+  needsReload?: boolean;
+}
+
 /** 按发现顺序组织课程，并将当前学期移到最前。 */
 function groupCourses(discovery: CourseDiscovery | null) {
   if (!discovery) return [];
@@ -113,50 +121,51 @@ function CoursewareDiagnostic({ diagnostic }: { diagnostic: string }) {
 
 /** 在教师栏目内逐层读取目录，管理同一课程的勾选和保存结果。 */
 function CoursewareCourse({ course, returnToCourses }: { course: Course; returnToCourses: () => void }) {
-  const [folders, setFolders] = useState<CoursewareFolder[]>([]);
+  const [pages, setPages] = useState<DirectoryPage[]>([{}]);
   const [selection, setSelection] = useState<Map<string, CoursewareSelection>>(new Map());
-  const [page, setPage] = useState<{
-    folder?: CoursewareFolder;
-    attempt: number;
-    listing?: CoursewareListing;
-    error?: string;
-    diagnostic?: string;
-    needsReload?: boolean;
-  }>();
-  const [attempt, setAttempt] = useState(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const selectAll = useRef<HTMLInputElement>(null);
   const download = useCoursewareDownload(true, removeSelections);
-  const folder = folders.at(-1);
-  const visiblePage = page?.folder === folder && page?.attempt === attempt ? page : undefined;
-  const entries = visiblePage?.listing?.items ?? [];
+  const page = pages.at(-1)!;
+  const { folder, listing } = page;
+  const folders = pages.flatMap(/** 使用当前路径上的教师栏目构建选择。 */ function directory(item) { return item.folder ? [item.folder] : []; });
+  const entries = listing?.items ?? [];
   const files = entries.flatMap(/** 当前页的全选仅包含已列出文件。 */ function fileSelection(item) { return item.kind === 'file' ? [{ file: item, folders }] : []; });
   const selectedHere = files.filter(/** 只用当前目录的已勾选文件确定全选状态。 */ function isSelected(item) { return selection.has(coursewareSelectionKey(item)); }).length;
   const allSelected = files.length > 0 && selectedHere === files.length;
   const busy = download.stage !== 'idle';
 
-  /** 仅在进入目录或显式重试时请求页面，忽略离开后返回的结果。 */
+  /** 打开或刷新目录时读取，返回上一级则直接恢复当时的列表。 */
   useEffect(function loadFolder() {
+    if (page.listing || page.error) return;
     let current = true;
+    /** 将结果应用于同一次打开。登录或课程校验失败时丢弃先前显示的上级列表。 */
+    function finish(result: DirectoryPage, invalidateParents = false) {
+      if (!current) return;
+      setPages(/** 对比请求对应的页面，防止覆盖随后切换的路径。 */ function replace(previous) {
+        if (previous.at(-1) !== page) return previous;
+        const parents = previous.slice(0, -1);
+        return [...(invalidateParents ? parents.map(/** 保留栏目路径，返回时重新读取。 */ function withoutListing(parent) { return { folder: parent.folder }; }) : parents), result];
+      });
+    }
     /** 完成读取时仍处于本次打开的目录才显示结果。 */
     async function load() {
       try {
-        const listing = await collectCourseware(course, folder);
-        if (current) setPage({ folder, attempt, listing });
+        finish({ folder, listing: await collectCourseware(course, folder) });
       } catch (error) {
-        if (current) setPage({
+        const appError = error instanceof AppError ? error : undefined;
+        finish({
           folder,
-          attempt,
           error: friendlyError(error),
-          diagnostic: error instanceof AppError ? error.diagnostic : undefined,
-          needsReload: error instanceof AppError && error.code === 'extension_reload_required',
-        });
+          diagnostic: appError?.diagnostic,
+          needsReload: appError?.code === 'extension_reload_required',
+        }, Boolean(appError && ['login_required', 'consent_required', 'course_changed', 'course_mismatch', 'account_unknown', 'extension_reload_required'].includes(appError.code)));
       }
     }
     void load();
     /** 读取完成前离开目录时放弃该次结果。 */
     return function ignoreLateResult() { current = false; };
-  }, [course, folder, attempt]);
+  }, [course, folder, page]);
 
   /** 路径改变后把焦点放在新目录标题，避免键盘焦点留在被替换的条目上。 */
   useEffect(function focusDirectory() { heading.current?.focus(); }, [folder]);
@@ -182,11 +191,11 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
     });
   }
 
-  /** 改变可见路径时丢弃旧列表，保留本课程在其他目录的勾选。 */
-  function goTo(next: CoursewareFolder[]) { setPage(undefined); setFolders(next); }
-
-  /** 用同一路径触发一次显式重读，不清除已勾选的其他文件。 */
-  function retryListing() { setAttempt(attempt + 1); }
+  /** 重新读取当前目录，保留路径和已勾选的文件。 */
+  function refreshListing() {
+    heading.current?.focus();
+    setPages([...pages.slice(0, -1), { folder }]);
+  }
 
   /** 从下载按钮的直接点击进入目录选择器，冻结本批勾选。 */
   function downloadSelected() { void download.start({ course, files: [...selection.values()] }); }
@@ -194,25 +203,26 @@ function CoursewareCourse({ course, returnToCourses }: { course: Course; returnT
   return <>
     <main className="workspace courseware-view" aria-label="课程课件">
       <div className="courseware-back">
-        {folder && <button type="button" className="text-button" disabled={busy} onClick={/** 返回当前目录的直接上一级。 */ function goBack() { goTo(folders.slice(0, -1)); }}><Icon name="chevron" />返回上一层</button>}
+        {folder && <button type="button" className="text-button" disabled={busy} onClick={/** 恢复上一层此前显示的列表。 */ function goBack() { setPages(pages.slice(0, -1)); }}><Icon name="chevron" />返回上一层</button>}
         <button type="button" className="text-button" disabled={busy} onClick={returnToCourses}>{folder ? '返回课程列表' : <><Icon name="chevron" />返回课程列表</>}</button>
+        {listing && <button type="button" className="text-button" disabled={busy} onClick={refreshListing}>刷新目录</button>}
       </div>
       <h2 ref={heading} tabIndex={-1} className="courseware-title">{folder?.name ?? coursewareTitle(course)}</h2>
       <p className="courseware-path">{folder ? [course.code, ...folders.map(/** 使用老师的原始目录名。 */ function name(item) { return item.name; })].join(' / ') : course.termLabel}</p>
       <CoursewareDownloadResults report={download.report} />
-      {!visiblePage && <p role="status" className="muted">正在读取{folder ? '目录' : '课件栏目'}…</p>}
-      {visiblePage?.error && <div>
-        <p role="alert" className="inline-error">{visiblePage.error}</p>
-        <button type="button" className="text-button" disabled={busy} onClick={visiblePage.needsReload ? reloadExtension : retryListing}>{visiblePage.needsReload ? '重新加载插件' : '重试读取'}</button>
-        {visiblePage.diagnostic && <CoursewareDiagnostic diagnostic={visiblePage.diagnostic} />}
+      {!listing && !page.error && <p role="status" className="muted">正在读取{folder ? '目录' : '课件栏目'}…</p>}
+      {page.error && <div>
+        <p role="alert" className="inline-error">{page.error}</p>
+        <button type="button" className="text-button" disabled={busy} onClick={page.needsReload ? reloadExtension : refreshListing}>{page.needsReload ? '重新加载插件' : '重试读取'}</button>
+        {page.diagnostic && <CoursewareDiagnostic diagnostic={page.diagnostic} />}
       </div>}
-      {visiblePage?.listing && !entries.length && <p className="muted">{folder ? '当前目录没有可下载的课件。' : '这门课程没有可浏览的课件栏目。'}</p>}
+      {listing && !entries.length && <p className="muted">{folder ? '当前目录没有可下载的课件。' : '这门课程没有可浏览的课件栏目。'}</p>}
       {files.length > 0 && <label className="courseware-file courseware-select-all">
         <input ref={selectAll} type="checkbox" checked={allSelected} disabled={busy} onChange={/** 只全选或取消当前目录中列出的文件。 */ function toggleAll(event) { updateSelection(files, event.target.checked); }} />全选当前目录
       </label>}
       {entries.length > 0 && <ul className="courseware-list">
         {entries.map(/** 保留目录页面的项目顺序，目录打开与文件勾选使用各自的原生控件。 */ function renderEntry(item) {
-          if (item.kind === 'folder') return <li key={item.id}><button type="button" className="courseware-entry" disabled={busy || folders.some(/** 避免重复进入祖先链接。 */ function isAncestor(ancestor) { return ancestor.id === item.id; })} onClick={/** 进入子目录，在下一次渲染读取其列表。 */ function openFolder() { goTo([...folders, item]); }}><span>{item.name}</span><Icon name="chevron" /></button></li>;
+          if (item.kind === 'folder') return <li key={item.id}><button type="button" className="courseware-entry" disabled={busy || folders.some(/** 避免重复进入祖先链接。 */ function isAncestor(ancestor) { return ancestor.id === item.id; })} onClick={/** 保留父目录并进入所选子目录。 */ function openFolder() { setPages([...pages, { folder: item }]); }}><span>{item.name}</span><Icon name="chevron" /></button></li>;
           const choice = { file: item, folders };
           const format = fileType(item.name);
           return <li key={item.id}><label className="courseware-file">

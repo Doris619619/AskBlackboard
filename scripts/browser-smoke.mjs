@@ -7,7 +7,7 @@ import { portalUrl, announcementUrl, portal, announcements, found, completion, g
 import {
   coursewarePortal, reportAnnouncements, coursewarePage, coursewareCourseId, coursewareLanding,
   forbiddenCoursewareLanding, historicalCoursewareCourseId, historicalCoursewareAlternate,
-  alternateCoursewareCourseId, alternateCoursewareLanding, unsupportedCoursewareLanding,
+  alternateCoursewareCourseId, unsupportedCoursewareLanding,
   unsupportedCoursewareLandingPath, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes,
 } from '../tests/browser/fixtures.mjs';
 import { runCoursewareSmoke } from './browser-courseware-smoke.mjs';
@@ -32,7 +32,7 @@ let announcementReads = 0;
 let modelCalls = 0;
 let unsafeRequests = 0;
 let assignmentReads = 0;
-const coursewareState = { files: [], entries: [], unsafeRedirectRequested: false, failDirectory: true, failTutorial: true, loginExpired: false };
+const coursewareState = { files: [], entries: [], directoryReads: 0, unsafeRedirectRequested: false, failDirectory: true, failTutorial: true, loginExpired: false };
 const coursewareRedirects = new Map([
   [coursewareCourseId, coursewareLanding],
   [historicalCoursewareCourseId, forbiddenCoursewareLanding],
@@ -51,6 +51,8 @@ async function schoolRoute(route) {
   const request = route.request();
   const url = new URL(request.url());
   const address = `${url.pathname}${url.search}`;
+  const courseMenu = url.pathname.endsWith('/announcement') && url.searchParams.get('context') === 'course_entry';
+  if (courseMenu || /\/(?:tabAction|courseMain|modulepage\/view|listContent\.jsp)$/.test(url.pathname)) coursewareState.directoryReads += 1;
   if (url.pathname === lectureFilePath || url.pathname === tutorialFilePath) {
     coursewareState.files.push(url.pathname);
     if (url.pathname === tutorialFilePath && coursewareState.failTutorial) return route.fulfill({ status: 503, body: 'test-only' });
@@ -63,9 +65,9 @@ async function schoolRoute(route) {
   if (unsafeRedirect || /uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
   if (!loggedIn || coursewareState.loginExpired) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
   if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: coursewarePortal });
-  if (address === historicalCoursewareAlternate) {
-    coursewareState.entries.push({ courseId: historicalCoursewareCourseId, page: 'course_entry', navigation: request.isNavigationRequest() });
-    return route.fulfill({ status: 404, body: 'test-only' });
+  if (courseMenu) {
+    coursewareState.entries.push({ courseId: url.searchParams.get('course_id'), page: 'course_entry', navigation: request.isNavigationRequest() });
+    if (address === historicalCoursewareAlternate) return route.fulfill({ status: 404, body: 'test-only' });
   }
   if (url.pathname.endsWith('/courseMain')) {
     const courseId = url.searchParams.get('course_id');
@@ -79,8 +81,6 @@ async function schoolRoute(route) {
   if (materials !== undefined) {
     if (address === coursewareLanding) {
       coursewareState.entries.push({ courseId: coursewareCourseId, page: 'modulepage', navigation: request.isNavigationRequest() });
-    } else if (address === alternateCoursewareLanding) {
-      coursewareState.entries.push({ courseId: alternateCoursewareCourseId, page: 'course_entry', navigation: request.isNavigationRequest() });
     }
     if (coursewareState.failDirectory && url.searchParams.get('content_id') === '_962_1') return route.fulfill({ status: 503, body: 'test-only' });
     return route.fulfill({ contentType: 'text/html', body: materials });

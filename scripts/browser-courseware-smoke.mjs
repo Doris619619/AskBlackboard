@@ -63,8 +63,8 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   const directoryError = panel.getByRole('main', { name: '课程课件' }).getByRole('alert');
   await directoryError.waitFor();
   assert.deepEqual(state.entries, [
-    { courseId: historicalCoursewareCourseId, page: 'courseMain', navigation: false },
     { courseId: historicalCoursewareCourseId, page: 'course_entry', navigation: false },
+    { courseId: historicalCoursewareCourseId, page: 'courseMain', navigation: false },
   ]);
   assert.equal(state.unsafeRedirectRequested, false);
   passed('courseware stops a redirect to an assessment before requesting it');
@@ -89,16 +89,17 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   passed('courseware explains a blocked redirect without exposing raw URLs or course IDs');
   await panel.getByRole('button', { name: '返回课程列表', exact: true }).click();
   const alternateReadStart = state.entries.length;
+  const firstOpenReads = state.directoryReads;
   await panel.getByRole('button', { name: 'ECE3060: Introduction to Robotics', exact: true }).click();
   const content = panel.getByRole('button', { name: 'Content', exact: true });
   await content.or(directoryError).waitFor();
   assert.ok(await content.isVisible(), (await directoryError.allTextContents()).join(' '));
   assert.deepEqual(state.entries.slice(alternateReadStart), [
-    { courseId: alternateCoursewareCourseId, page: 'courseMain', navigation: false },
     { courseId: alternateCoursewareCourseId, page: 'course_entry', navigation: false },
   ]);
+  assert.equal(state.directoryReads - firstOpenReads, 2);
   assert.equal(state.unsafeRedirectRequested, false);
-  passed('courseware reads the same-course announcement menu without requesting an unsupported redirect');
+  passed('courseware opens the announcement menu after one portal check without fetching courseMain');
   await panel.getByRole('button', { name: '返回课程列表', exact: true }).click();
   const moduleReadStart = state.entries.length;
   await panel.getByRole('button', { name: 'ECE4016: Example Course', exact: true }).click();
@@ -107,6 +108,7 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   await tutorial.or(directoryError).waitFor();
   assert.ok(await tutorial.isVisible(), (await directoryError.allTextContents()).join(' '));
   assert.deepEqual(state.entries.slice(moduleReadStart), [
+    { courseId: coursewareCourseId, page: 'course_entry', navigation: false },
     { courseId: coursewareCourseId, page: 'courseMain', navigation: false },
     { courseId: coursewareCourseId, page: 'modulepage', navigation: false },
   ]);
@@ -117,8 +119,23 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   await panel.getByRole('button', { name: 'Lecture', exact: true }).click();
   await panel.getByRole('checkbox', { name: 'Week 01.pdf', exact: true }).check();
   assert.equal(await panel.getByText('Assignment.pdf', { exact: true }).count(), 0);
-  await panel.getByRole('button', { name: '返回上一层', exact: true }).click();
-  await panel.getByRole('button', { name: '返回上一层', exact: true }).click();
+  const readsBeforeBack = state.directoryReads;
+  const back = panel.getByRole('button', { name: '返回上一层', exact: true });
+  const lecture = panel.getByRole('button', { name: 'Lecture', exact: true });
+  await back.click();
+  await lecture.waitFor();
+  assert.equal(state.directoryReads, readsBeforeBack);
+  await back.click();
+  await tutorial.waitFor();
+  assert.equal(state.directoryReads, readsBeforeBack);
+  passed('courseware returns through both parent levels without another portal or directory request');
+  await content.click();
+  await lecture.waitFor();
+  const readsBeforeRefresh = state.directoryReads;
+  await panel.getByRole('button', { name: '刷新目录', exact: true }).click();
+  await lecture.waitFor();
+  assert.equal(state.directoryReads - readsBeforeRefresh, 2);
+  await back.click();
   await tutorial.click();
   const retryDirectory = panel.getByRole('button', { name: '重试读取', exact: true });
   await retryDirectory.waitFor();
