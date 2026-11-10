@@ -42,7 +42,7 @@
 
 ## 数据与权限
 
-仅申请 `storage`、`sidePanel` 及 Blackboard、DeepSeek 两个域名。学校密码与 Cookie 留在浏览器。密钥存于扩展受信的 `chrome.storage.local`，不发给学校页面、不随安装包分发。
+扩展申请 `storage`、`sidePanel`、`webRequest` 及 Blackboard、DeepSeek 两个域名。课件读取用 `webRequest` 观察本次目录请求的跳转地址，以便核对课程后继续读取。学校密码与 Cookie 留在浏览器。密钥存于扩展受信的 `chrome.storage.local`，不发给学校页面、不随安装包分发。
 
 目前使用窗口级侧栏，同一窗口切换标签页时侧栏可能继续显示。界面的显示作用域与数据读取权限不同：学校内容脚本只注入Blackboard，并不因此读取其他网站。改为仅Blackboard标签页显示需要调整Side Panel的tabId级配置。
 

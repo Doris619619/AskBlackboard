@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "查询 Blackboard 课程公告和作业截止时间，按课程目录批量保存课件。",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "sidePanel"],
+  "permissions": ["storage", "sidePanel", "webRequest"],
   "host_permissions": ["https://bb.cuhk.edu.cn/*", "https://api.deepseek.com/*"],
   "action": { "default_title": "打开 AskBlackboard" },
   "side_panel": { "default_path": "sidepanel.html" },

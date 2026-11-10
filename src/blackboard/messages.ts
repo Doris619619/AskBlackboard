@@ -5,7 +5,7 @@ export type ContentMessage =
   | ExtensionMessage
   | { type: 'read_announcement_page'; course: Course; url: string }
   | { type: 'read_assignment_page'; course: Course }
-  | { type: 'read_courseware'; course: Course; folderUrl?: string }
+  | { type: 'read_courseware'; course: Course; folderUrl?: string; pageUrl: string }
   | { type: 'read_courseware_page'; course: Course; folderUrl?: string }
   | { type: 'read_discovery_page' };
 

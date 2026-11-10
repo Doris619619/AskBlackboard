@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { portalUrl, announcementUrl, portal, announcements, found, completion, gebAnnouncements, gebFound, gebAnnouncementUrl, assignmentRoot, assignmentListing } from '../tests/browser/fixtures.mjs';
-import { coursewarePortal, reportAnnouncements, coursewarePage, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes } from '../tests/browser/fixtures.mjs';
+import { coursewarePortal, reportAnnouncements, coursewarePage, coursewareCourseId, coursewareLanding, forbiddenCoursewareLanding, historicalCoursewareCourseId, lectureFilePath, tutorialFilePath, lectureBytes, tutorialBytes } from '../tests/browser/fixtures.mjs';
 import { runCoursewareSmoke } from './browser-courseware-smoke.mjs';
 
 const output = path.resolve('artifacts/browser-smoke');
@@ -27,7 +27,7 @@ let announcementReads = 0;
 let modelCalls = 0;
 let unsafeRequests = 0;
 let assignmentReads = 0;
-const coursewareState = { files: [], failDirectory: true, failTutorial: true, loginExpired: false };
+const coursewareState = { files: [], entries: [], unsafeRedirectRequested: false, failDirectory: true, failTutorial: true, loginExpired: false };
 let releasePending;
 const checks = [];
 const pageErrors = [];
@@ -46,11 +46,23 @@ async function schoolRoute(route) {
       ? route.fulfill({ contentType: 'application/pdf', headers: { 'Content-Disposition': 'attachment; filename="Week 01.pdf"' }, body: lectureBytes })
       : route.fulfill({ contentType: 'application/vnd.ms-powerpoint', headers: { 'Content-Disposition': 'attachment; filename="Tutorial 01.ppt"' }, body: tutorialBytes });
   }
+  if (url.pathname === forbiddenCoursewareLanding) coursewareState.unsafeRedirectRequested = true;
   if (/uploadAssignment|assessment|bbcswebdav/.test(url.pathname)) { unsafeRequests += 1; return route.abort(); }
   if (!loggedIn || coursewareState.loginExpired) return route.fulfill({ status: 200, contentType: 'text/html', body: '<html><head><title>Login</title></head><body><form id="loginForm"><input type="password"></form></body></html>' });
   if (url.pathname.includes('/portal/')) return route.fulfill({ contentType: 'text/html', body: coursewarePortal });
+  if (url.pathname.endsWith('/courseMain')) {
+    const courseId = url.searchParams.get('course_id');
+    if (courseId === coursewareCourseId || courseId === historicalCoursewareCourseId) {
+      coursewareState.entries.push({ courseId, page: 'courseMain', navigation: route.request().isNavigationRequest() });
+      const location = courseId === coursewareCourseId ? coursewareLanding : forbiddenCoursewareLanding;
+      return route.fulfill({ status: 302, headers: { Location: location } });
+    }
+  }
   const materials = coursewarePage(url);
   if (materials !== undefined) {
+    if (`${url.pathname}${url.search}` === coursewareLanding) {
+      coursewareState.entries.push({ courseId: coursewareCourseId, page: 'modulepage', navigation: route.request().isNavigationRequest() });
+    }
     if (coursewareState.failDirectory && url.searchParams.get('content_id') === '_962_1') return route.fulfill({ status: 503, body: 'test-only' });
     return route.fulfill({ contentType: 'text/html', body: materials });
   }

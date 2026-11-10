@@ -1,7 +1,7 @@
 /** 文件用途：用实际扩展、虚构课件和浏览器私有文件系统验证课件选取与原字节保存。 */
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { lectureBytes, lectureFilePath, tutorialBytes, tutorialFilePath } from '../tests/browser/fixtures.mjs';
+import { coursewareCourseId, historicalCoursewareCourseId, lectureBytes, lectureFilePath, tutorialBytes, tutorialFilePath } from '../tests/browser/fixtures.mjs';
 
 /** 仅替换系统选择器，保存仍经过浏览器真实目录句柄及可写文件流。 */
 async function installPicker(panel) {
@@ -55,12 +55,28 @@ export async function runCoursewareSmoke(panel, state, output, passed) {
   const selectedCourse = await panel.getByLabel('选择课程和教学班').inputValue();
   const turns = await panel.locator('.conversation-turn').count();
   await panel.getByRole('button', { name: '课件', exact: true }).click();
-  await panel.getByRole('button', { name: 'ECE4016: Older Course', exact: true }).waitFor();
+  assert.equal(panel.context().pages().some(/** 确认没有已打开的同课页面供备用读取。 */ function isCoursePage(page) {
+    return new URL(page.url()).searchParams.get('course_id') === coursewareCourseId;
+  }), false);
+  await panel.getByRole('button', { name: 'ECE4016: Older Course', exact: true }).click();
+  await panel.getByRole('heading', { name: 'ECE4016: Older Course', exact: true }).waitFor();
+  const directoryError = panel.getByRole('main', { name: '课程课件' }).getByRole('alert');
+  await directoryError.waitFor();
+  assert.deepEqual(state.entries, [{ courseId: historicalCoursewareCourseId, page: 'courseMain', navigation: false }]);
+  assert.equal(state.unsafeRedirectRequested, false);
+  passed('courseware stops a redirect to an assessment before requesting it');
+  await panel.getByRole('button', { name: '返回课程列表', exact: true }).click();
   await panel.getByRole('button', { name: 'ECE4016: Example Course', exact: true }).click();
   await panel.getByRole('heading', { name: 'ECE4016: Example Course', exact: true }).waitFor();
   const content = panel.getByRole('button', { name: 'Content', exact: true });
   const tutorial = panel.getByRole('button', { name: 'Tutorial', exact: true });
-  await tutorial.waitFor();
+  await tutorial.or(directoryError).waitFor();
+  assert.ok(await tutorial.isVisible(), (await directoryError.allTextContents()).join(' '));
+  assert.deepEqual(state.entries.slice(1), [
+    { courseId: coursewareCourseId, page: 'courseMain', navigation: false },
+    { courseId: coursewareCourseId, page: 'modulepage', navigation: false },
+  ]);
+  passed('courseware follows the same-course landing redirect from the sidebar');
   assert.equal(await panel.getByRole('button', { name: 'Tests', exact: true }).count(), 0);
   assert.equal(await content.evaluate(function teacherOrder(element) { return element.parentElement.nextElementSibling?.textContent.includes('Tutorial'); }), true);
   await content.click();

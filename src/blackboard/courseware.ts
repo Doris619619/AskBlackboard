@@ -3,7 +3,7 @@ import { AppError } from '../shared/errors';
 import type { CoursewareFile, CoursewareFolder, CoursewareListing } from '../shared/courseware-types';
 import type { Course } from '../shared/types';
 import { assignmentReadUrl, CONTENT_PATH, COURSE_PATH } from './assignment-policy';
-import { coursewareFileUrl, coursewarePageUrl, isCoursewareFilename } from './courseware-policy';
+import { COURSEWARE_REDIRECT_MESSAGE, coursewareFileUrl, coursewarePageUrl, isCoursewareFilename } from './courseware-policy';
 import { assertReadableDocument, parseHtml, plainText } from './dom';
 
 export { coursewarePageUrl } from './courseware-policy';
@@ -124,14 +124,14 @@ export function parseCoursewareListing(document: Document, pageUrl: string, cour
   return url === undefined ? readMenu(container, page, course) : readFolder(container, page, course);
 }
 
-/** 使用当前登录态读取一页 HTML；不跟随跳转，允许后台改读用户已打开且通过校验的同课程页面。 */
-export async function readCoursewareListing(course: Course, url?: string): Promise<CoursewareListing> {
-  const target = coursewarePageUrl(course.courseId, url);
+/** 使用当前登录态读取一页 HTML；后台可提供逐跳校验后的地址，浏览器仍不自动跟随。 */
+export async function readCoursewareListing(course: Course, url?: string, pageUrl?: string): Promise<CoursewareListing> {
+  const target = coursewarePageUrl(course.courseId, url, pageUrl);
   try {
     const response = await fetch(target.href, { method: 'GET', credentials: 'same-origin', redirect: 'manual', cache: 'no-store', signal: AbortSignal.timeout(15000) });
     if ([401, 403].includes(response.status)) throw new AppError('login_required', '请在 Blackboard 正常登录后重试。');
     if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) {
-      throw new AppError('courseware_redirect', '课件目录发生跳转，请在 Blackboard 检查登录并打开该课程后重试。');
+      throw new AppError('courseware_redirect', COURSEWARE_REDIRECT_MESSAGE);
     }
     if (!response.ok) throw new AppError('transport_error', '课件目录暂时无法读取，请重试。');
     if (!/text\/html|application\/xhtml\+xml/i.test(response.headers.get('content-type') ?? '')) {

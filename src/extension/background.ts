@@ -10,6 +10,7 @@ import { assignmentReadUrl, assignmentEntry, CONTENT_PATH } from '../blackboard/
 import { readCourseAssignments, type AssignmentPage } from '../blackboard/assignments';
 import { coursewarePageUrl } from '../blackboard/courseware-policy';
 import type { CoursewareListing } from '../shared/courseware-types';
+import { readCoursewareWithRedirects } from './courseware-redirect';
 
 const TAB_TIMEOUT_MS = 20000;
 
@@ -183,11 +184,15 @@ async function collectAssignments(tabId: number, course: Course): Promise<Announ
   return fallbackTab(assignmentEntry(course.courseId), readRenderedAssignments);
 }
 
-/** 读取一层课件目录；仅复用用户已打开的同一页面作为渲染备用，不因浏览目录加载其子资源。 */
+/** 读取一层课件目录，逐跳验证地址，仅复用用户已打开的同一页面作为渲染备用。 */
 async function collectCourseware(tabId: number, course: Course, folderUrl?: string): Promise<CoursewareListing> {
   const url = coursewarePageUrl(course.courseId, folderUrl);
+  /** 请求当前已校验的一页，保持原文件夹标识供内容脚本复核。 */
+  function readPage(pageUrl: string): Promise<CoursewareListing> {
+    return sendContent(tabId, { type: 'read_courseware', course, folderUrl, pageUrl });
+  }
   try {
-    return await sendContent<CoursewareListing>(tabId, { type: 'read_courseware', course, folderUrl });
+    return await readCoursewareWithRedirects(tabId, course.courseId, folderUrl, readPage);
   } catch (error) {
     if (!(error instanceof AppError) || !['unsupported_page', 'transport_error', 'courseware_redirect'].includes(error.code)) throw error;
     const tabs = await chrome.tabs.query({ url: `${url.origin}/*` });

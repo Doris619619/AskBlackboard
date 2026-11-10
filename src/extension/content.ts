@@ -32,9 +32,9 @@ async function handleMessage(raw: unknown): Promise<unknown> {
     case 'read_courseware':
     case 'read_courseware_page':
       if (!isCourse(message.course) || (message.folderUrl !== undefined && typeof message.folderUrl !== 'string')) throw new AppError('invalid_course', '课件目录无效，请重新选择课程。');
-      return message.type === 'read_courseware'
-        ? readCoursewareListing(message.course, message.folderUrl)
-        : parseCoursewareListing(document, location.href, message.course, message.folderUrl);
+      if (message.type === 'read_courseware_page') return parseCoursewareListing(document, location.href, message.course, message.folderUrl);
+      if (typeof message.pageUrl !== 'string') throw new AppError('invalid_message', '课件页面地址无效，请重新加载插件。');
+      return readCoursewareListing(message.course, message.folderUrl, message.pageUrl);
     case 'read_announcement_page':
       if (!isCourse(message.course)) throw new AppError('invalid_course', '课程数据无效，请重新读取课程列表。');
       if (typeof message.url !== 'string') throw new AppError('invalid_message', '公告分页地址无效。');

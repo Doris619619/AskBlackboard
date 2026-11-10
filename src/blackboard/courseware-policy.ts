@@ -7,15 +7,18 @@ const fileSuffix = /\.(?:pdf|pptx?|docx?|xlsx?|txt|csv|rtf|odt|ods|odp|zip|rar|7
 const webDavId = /^xid-\d+_\d+$/i;
 const webDavItem = /^pid-\d+-dt-content-rid-\d+_\d+$/i;
 const repositories = new Set(['courses', 'institution', 'orgs', 'library']);
+export const COURSEWARE_REDIRECT_MESSAGE = '无法确认课件目录的跳转目标，请在 Blackboard 打开该课程的课件栏目后重试。';
 
 /** 判断可保存的课件格式；目录页没有文件名的 XID 链接还需由响应确认格式。 */
 export function isCoursewareFilename(name: string): boolean { return fileSuffix.test(name.trim()); }
 
-/** 验证课程入口或课件子目录，只允许从当前课程的内容列表读取。 */
-export function coursewarePageUrl(courseId: string, url?: string): URL {
-  if (url === undefined) return new URL(assignmentEntry(courseId));
-  const target = assignmentReadUrl(url, courseId);
-  if (target.pathname !== CONTENT_PATH) throw new AppError('unsafe_url', '只能读取当前课程的课件目录。');
+/** 验证请求页面。课程根可进入该课程的只读首页，子目录跳转必须保留原目录标识。 */
+export function coursewarePageUrl(courseId: string, folderUrl?: string, pageUrl?: string): URL {
+  const initial = folderUrl === undefined ? new URL(assignmentEntry(courseId)) : assignmentReadUrl(folderUrl, courseId);
+  const target = pageUrl === undefined ? initial : assignmentReadUrl(pageUrl, courseId, initial.href);
+  if (folderUrl !== undefined && (initial.pathname !== CONTENT_PATH || target.pathname !== CONTENT_PATH || target.searchParams.get('content_id') !== initial.searchParams.get('content_id'))) {
+    throw new AppError('unsafe_url', '只能读取当前课程的所选课件目录。');
+  }
   return target;
 }
 
